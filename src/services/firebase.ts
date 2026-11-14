@@ -3036,144 +3036,74 @@ export function buildFeeLedgerFromStudents(studentsList: Student[]): any[] {
  * 2. Commits all student updates in a single atomic Firestore `writeBatch` instead of N+1 separate requests.
  * 3. Only deletes a remote document if its ID is explicitly in the Master Admin `deletedRecords` tombstone registry.
  */
+/**
+ * Student backup helper retained for compatibility. It updates only the canonical
+ * workspace document; it never writes parallel student/admission collections.
+ */
 export async function backupStudentData(
   localStudents: Student[],
-  options?: { skipRemoteFetch?: boolean; forceAll?: boolean }
+  _options?: { skipRemoteFetch?: boolean; forceAll?: boolean }
 ): Promise<{ success: boolean; message?: string; error?: string; deletedCount?: number; mergedStudents?: Student[] }> {
   const deletedStudentIds = getDeletedIds('students');
   const activeLocalStudents = (localStudents || []).filter(
-    (s) => s && !(s as any).isDeleted && !deletedStudentIds.has(String(s.id || '').trim())
+    (student) => student && !(student as any).isDeleted && !deletedStudentIds.has(String(student.id || '').trim())
   );
 
   if (typeof window !== 'undefined') {
     try {
       const payload = JSON.stringify(activeLocalStudents);
-      if (payload.length < 400_000) {
-        localStorage.setItem('ssmi_students_v1', payload);
-      }
+      if (payload.length < 400_000) localStorage.setItem('ssmi_students_v1', payload);
     } catch {
-      // ignore quota errors
+      // Local cache is best effort.
     }
   }
 
   if (!(await ensureAuthorizedSession())) {
     return {
-      success: true,
+      success: false,
       mergedStudents: activeLocalStudents,
-      message: 'Local backup updated (sign in with Google to sync with Firebase Cloud).'
+      message: 'Saved on this device only. Sign in with the authorized Google account to sync the shared database.'
     };
   }
 
   try {
-    let mergedStudents = activeLocalStudents;
-    if (!options?.skipRemoteFetch) {
-      const [wsSnap, topSnap] = await Promise.all([
-        getDocsWithLocationFallback(getColRef('students'), 3000),
-        getDocsWithLocationFallback(collection(db, 'students'), 3000)
-      ]);
-      const remoteStudentsFromCol: Student[] = [];
-      const collectSnap = (snap: any) => {
-        if (snap && !snap.empty) {
-          recordCloudReadSuccess();
-          snap.forEach((docSnap: any) => {
-            const raw = docSnap.data();
-            const docId = String(docSnap.id || raw?.id || '').trim();
-            if (raw && !raw.isDeleted && docId && !deletedStudentIds.has(docId)) {
-              remoteStudentsFromCol.push({
-                ...raw,
-                id: String(raw.id || docId),
-                milestones: Array.isArray(raw.milestones) ? raw.milestones : []
-              } as Student);
-            }
-          });
-        }
-      };
-      collectSnap(wsSnap);
-      collectSnap(topSnap);
-      mergedStudents = mergeStudentsSafely(activeLocalStudents, remoteStudentsFromCol);
-    }
-
-    if (typeof window !== 'undefined') {
-      try {
-        const payload = JSON.stringify(mergedStudents);
-        if (payload.length < 400_000) {
-          localStorage.setItem('ssmi_students_v1', payload);
-        }
-      } catch {
-        // ignore quota errors
-      }
-    }
-
+    const masterRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
     const nowIso = new Date().toISOString();
-    const batchItems = mergedStudents.map((s) => {
-      const safeId = toSafeDocId(s.id);
-      const recordIso = (s as any).updatedAt || nowIso;
-      return {
-        docId: safeId,
-        payload: sanitizeForFirestore({
-          id: String(s.id).slice(0, 128),
-          regId: String(s.regId || '').slice(0, 64),
-          leadId: s.leadId ? String(s.leadId).slice(0, 64) : '',
-          name: String(s.name || '').slice(0, 128),
-          phone: String(s.phone || '').slice(0, 32),
-          whatsapp: String(s.whatsapp || '').slice(0, 32),
-          email: String(s.email || '').slice(0, 128),
-          address: String(s.address || '').slice(0, 256),
-          course: String(s.course || '').slice(0, 128),
-          batch: String(s.batch || '').slice(0, 64),
-          status: s.status || 'Active',
-          source: String(s.source || 'Direct').slice(0, 64),
-          netFee: Number(s.netFee) || 0,
-          grossFee: Number(s.grossFee) || 0,
-          discount: Number(s.discount) || 0,
-          enrollDate: String(s.enrollDate || '').slice(0, 32),
-          joinDate: String(s.joinDate || s.enrollDate || '').slice(0, 32),
-          docs: String(s.docs || '').slice(0, 256),
-          notes: String(s.notes || '').slice(0, 500),
-          milestones: Array.isArray(s.milestones) ? s.milestones : [],
-          isDeleted: false,
-          updatedAt: recordIso,
-          serverUpdatedAt: serverTimestamp()
-        })
-      };
+    let mergedStudents: Student[] = [];
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(masterRef);
+      const remote = snap.exists() ? snap.data() : {};
+      const remoteDeleted = (remote.deletedRecords || {}) as Partial<DeletedRecordsRegistry>;
+      const localDeleted = readDeletedRegistry();
+      const deletedRecords = {} as DeletedRecordsRegistry;
+      (['students', 'leads', 'batches', 'staff', 'courses'] as (keyof DeletedRecordsRegistry)[]).forEach((key) => {
+        deletedRecords[key] = Array.from(new Set([...(localDeleted[key] || []), ...(remoteDeleted[key] || [])]));
+      });
+      mergedStudents = mergeStudentsSafely(
+        Array.isArray(remote.students) ? remote.students : [],
+        activeLocalStudents
+      ).filter(student => !deletedRecords.students.includes(String(student.id || '')));
+      transaction.set(masterRef, {
+        ...remote,
+        students: mergedStudents,
+        deletedRecords,
+        workspaceId: SHARED_INSTITUTE_ROOT_ID,
+        syncSchemaVersion: 2,
+        revision: Number(remote.revision || 0) + 1,
+        updatedAt: nowIso,
+        serverUpdatedAt: serverTimestamp()
+      }, { merge: false });
     });
-
-    await commitDirtyBatch('students', batchItems, deletedStudentIds, Boolean(options?.forceAll));
-
-    if (!options?.skipRemoteFetch) {
-      const feeLedger = buildFeeLedgerFromStudents(mergedStudents);
-      await executeWithBackoff(
-        () =>
-          setDoc(
-            doc(db, 'institutes', 'institute_master_data'),
-            sanitizeForFirestore({
-              students: mergedStudents,
-              fees: feeLedger,
-              fee_ledger: feeLedger,
-              deletedRecords: readDeletedRegistry(),
-              deviceId: getLocalDeviceId(),
-              updatedAt: nowIso,
-              serverUpdatedAt: serverTimestamp()
-            }),
-            { merge: true }
-          ),
-        { maxAttempts: 2, baseDelayMs: 600, timeoutMs: 10000, label: 'Update master student ledger' }
-      );
-      recordCloudWriteSuccess();
-    }
-
+    recordCloudWriteSuccess();
     return {
       success: true,
       deletedCount: deletedStudentIds.size,
       mergedStudents,
-      message: 'Students synchronized atomically across devices.'
+      message: 'Students synchronized to the canonical shared workspace.'
     };
   } catch (error: any) {
-    console.warn('Backup notice:', error);
-    return {
-      success: false,
-      error: error?.message || 'Backup failed'
-    };
+    console.warn('Canonical student backup notice:', error);
+    return { success: false, error: error?.message || 'Backup failed' };
   }
 }
 
@@ -3182,107 +3112,27 @@ export async function backupStudentData(
  * Reads from BOTH `doc(db, 'institutes', 'institute_master_data')` AND `collection(db, 'students')`
  * and union-merges them by per-record `updatedAt` timestamp so no record from either path is ever lost.
  */
+/**
+ * Reads student records from the canonical shared workspace only.
+ */
 export async function restoreStudentData(): Promise<{
   success: boolean;
   data?: Student[];
   error?: string;
 }> {
   if (!(await ensureAuthorizedSession())) {
-    return { success: false, data: [], error: 'Not authenticated' };
+    return { success: false, data: [], error: 'Real Firebase sign-in required' };
   }
   try {
-    const [wsMasterSnap, masterSnap, wsStudentsSnap, querySnapshot] = await Promise.all([
-      getDocWithLocationFallback(doc(db, 'institutes', INSTITUTE_WORKSPACE_ID), 3000),
-      getDocWithLocationFallback(doc(db, 'institutes', 'institute_master_data'), 3000),
-      getDocsWithLocationFallback(getColRef('students'), 3000),
-      getDocsWithLocationFallback(collection(db, 'students'), 3000)
-    ]);
-
-    const effectiveMasterSnap = wsMasterSnap && wsMasterSnap.exists() ? wsMasterSnap : masterSnap;
-    if (effectiveMasterSnap && effectiveMasterSnap.exists()) {
-      recordCloudReadSuccess();
-      const mData = effectiveMasterSnap.data();
-      if (mData?.deletedRecords) {
-        mergeRemoteDeletedRegistry(mData.deletedRecords);
-      }
-    }
-
-    const deletedIds = getDeletedIds('students');
-    const normalizeStudentObj = (data: any): Student | null => {
-      if (!data || data.isDeleted) return null;
-      const id = String(data.id || '').trim();
-      if (!id || deletedIds.has(id)) return null;
-      const norm: Student = {
-        id,
-        regId: String(data.regId || id),
-        leadId: data.leadId ? String(data.leadId) : undefined,
-        name: String(data.name || 'Unnamed Student'),
-        phone: String(data.phone || ''),
-        whatsapp: String(data.whatsapp || data.phone || ''),
-        email: String(data.email || ''),
-        address: String(data.address || ''),
-        course: String(data.course || 'Complete Master Trader Blueprint'),
-        batch: String(data.batch || ''),
-        enrollDate: String(data.enrollDate || new Date().toISOString().split('T')[0]),
-        joinDate: String(data.joinDate || data.enrollDate || new Date().toISOString().split('T')[0]),
-        status: data.status || 'Active',
-        source: String(data.source || 'Direct'),
-        grossFee: Number(data.grossFee) || Number(data.netFee) || 25000,
-        discount: Number(data.discount) || 0,
-        netFee: Number(data.netFee) || 25000,
-        docs: String(data.docs || ''),
-        notes: String(data.notes || ''),
-        milestones: Array.isArray(data.milestones) ? data.milestones : []
-      };
-      if (data.updatedAt) (norm as any).updatedAt = data.updatedAt;
-      if (data.serverUpdatedAt) (norm as any).serverUpdatedAt = data.serverUpdatedAt;
-      return norm;
+    const master = await fetchMasterSnapshotFromFirestore();
+    const students = Array.isArray(master?.students) ? master.students as Student[] : [];
+    return {
+      success: true,
+      data: filterActiveRecords(students, 'students', 'id')
     };
-
-    const masterList: Student[] = [];
-    if (effectiveMasterSnap && effectiveMasterSnap.exists()) {
-      const mData = effectiveMasterSnap.data();
-      const masterPayload = mData?.payload ? mData.payload : mData;
-      if (Array.isArray(masterPayload?.students)) {
-        masterPayload.students.forEach((raw: any) => {
-          const norm = normalizeStudentObj(raw);
-          if (norm) masterList.push(norm);
-        });
-      }
-    }
-
-    const colList: Student[] = [];
-    const ingestSnapshot = (snap: any) => {
-      if (snap && !snap.empty) {
-        recordCloudReadSuccess();
-        snap.forEach((docSnap: any) => {
-          const raw = docSnap.data();
-          const data = docSnap.id ? { id: docSnap.id, ...raw } : raw;
-          const norm = normalizeStudentObj(data);
-          if (norm) colList.push(norm);
-        });
-      }
-    };
-    ingestSnapshot(wsStudentsSnap);
-    ingestSnapshot(querySnapshot);
-
-    const restoredStudents = mergeStudentsSafely(masterList, colList);
-
-    if (typeof window !== 'undefined' && restoredStudents.length > 0) {
-      try {
-        const payload = JSON.stringify(restoredStudents);
-        if (payload.length < 400_000) {
-          localStorage.setItem('ssmi_students_v1', payload);
-        }
-      } catch {
-        // ignore quota errors
-      }
-    }
-
-    return { success: true, data: restoredStudents };
   } catch (error: any) {
-    console.warn('Restore notice:', error);
-    return { success: false, error: error?.message || 'Restore failed' };
+    console.warn('Canonical student restore notice:', error);
+    return { success: false, data: [], error: error?.message || 'Restore failed' };
   }
 }
 
