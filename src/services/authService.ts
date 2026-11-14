@@ -86,8 +86,7 @@ export interface AuthSessionResult {
 }
 
 /**
- * Synchronously resolves the active CRM session from `ssmi_crm_user_session` (defaulting to Prasad Sir / Master Admin)
- * so the app boots straight into the dashboard with zero login wall. Returns null only when explicitly signed out.
+ * Resolves only a genuine Firebase Auth session. A local profile is not cloud authentication.
  */
 export function getInitialAuthSession(): AuthSessionResult | null {
   // Only a real Firebase Auth user is an authenticated CRM session.
