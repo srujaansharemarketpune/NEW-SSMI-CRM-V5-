@@ -3157,188 +3157,32 @@ export async function deleteCourseFromFirestore(courseId: string): Promise<boole
 }
 
 export async function syncLeadsToFirestore(leads: Lead[]) {
-  if (!(await ensureAuthorizedSession())) return;
-  const deletedLeadIds = getDeletedIds('leads');
-  const activeLeads = (leads || []).filter(
-    (l) => l && !(l as any).isDeleted && !deletedLeadIds.has(String(l.id || '').trim())
-  );
-  const nowIso = new Date().toISOString();
-  const items = activeLeads.map((l) => ({
-    docId: toSafeDocId(l.id),
-    payload: sanitizeForFirestore({
-      id: String(l.id).slice(0, 128),
-      name: String(l.name || '').slice(0, 128),
-      phone: String(l.phone || '').slice(0, 32),
-      email: String(l.email || '').slice(0, 128),
-      locality: String(l.locality || '').slice(0, 128),
-      course: String(l.course || '').slice(0, 128),
-      source: String(l.source || '').slice(0, 64),
-      stage: String(l.stage || 'New Enquiry').slice(0, 64),
-      intent: l.intent || 'Warm',
-      enquiryDate: String(l.enquiryDate || '').slice(0, 32),
-      followUpDate: String(l.followUpDate || '').slice(0, 32),
-      followUpTime: String(l.followUpTime || '').slice(0, 32),
-      lastContact: String(l.lastContact || '').slice(0, 32),
-      mode: String(l.mode || 'Offline Classroom').slice(0, 64),
-      staff: String(l.staff || 'Prasad Sir').slice(0, 128),
-      objection: String(l.objection || 'None').slice(0, 128),
-      notes: String(l.notes || '').slice(0, 1000),
-      isDeleted: false,
-      updatedAt: (l as any).updatedAt || nowIso,
-      serverUpdatedAt: serverTimestamp()
-    })
-  }));
-  await commitDirtyBatch('leads', items, deletedLeadIds);
+  const active = (leads || []).filter(lead => lead && !(lead as any).isDeleted);
+  await Promise.all(active.map(lead => upsertCanonicalWorkspaceRecord('leads', lead as any, 'id')));
 }
 
 export async function syncBatchesToFirestore(batches: Batch[]) {
-  if (!(await ensureAuthorizedSession())) return;
-  const deletedBatchIds = getDeletedIds('batches');
-  const activeBatches = (batches || []).filter(
-    (b) => b && !(b as any).isDeleted && !deletedBatchIds.has(String(b.code || '').trim())
-  );
-  const nowIso = new Date().toISOString();
-  const items = activeBatches.map((b) => ({
-    docId: toSafeDocId(b.code),
-    payload: sanitizeForFirestore({
-      code: String(b.code).slice(0, 64),
-      name: String(b.name || '').slice(0, 128),
-      course: String(b.course || '').slice(0, 128),
-      mode: String(b.mode || 'Classroom').slice(0, 64),
-      instructor: String(b.instructor || 'Prasad Sir').slice(0, 128),
-      schedule: String(b.schedule || '').slice(0, 128),
-      startDate: String(b.startDate || '').slice(0, 32),
-      endDate: String(b.endDate || '').slice(0, 32),
-      capacity: Number(b.capacity) || 25,
-      status: b.status || 'Active',
-      isDeleted: false,
-      updatedAt: (b as any).updatedAt || nowIso,
-      serverUpdatedAt: serverTimestamp()
-    })
-  }));
-  await commitDirtyBatch('batches', items, deletedBatchIds);
+  const active = (batches || []).filter(batch => batch && !(batch as any).isDeleted);
+  await Promise.all(active.map(batch => upsertCanonicalWorkspaceRecord('batches', batch as any, 'code')));
 }
 
 export async function syncSettingsToFirestore(state: AppState) {
-  if (!(await ensureAuthorizedSession())) return;
-  try {
-    await executeWithBackoff(
-      () =>
-        setDoc(
-          doc(db, 'settings', 'institute_profile'),
-          sanitizeForFirestore({
-            ...state.settings,
-            instituteName: String(state.settings.instituteName || 'Srujaan Share Market Institute').slice(0, 200),
-            tagline: String(state.settings.tagline || '').slice(0, 300),
-            campusAddress: String(state.settings.campusAddress || '').slice(0, 500),
-            phone: String(state.settings.phone || '').slice(0, 32),
-            email: String(state.settings.email || '').slice(0, 128),
-            website: String(state.settings.website || '').slice(0, 256),
-            gstin: String(state.settings.gstin || '').slice(0, 32),
-            upiId: String(state.settings.upiId || '').slice(0, 128),
-            currencySymbol: String(state.settings.currencySymbol || '₹').slice(0, 10),
-            receiptPrefix: String(state.settings.receiptPrefix || 'SSMI-REC-').slice(0, 32),
-            signatoryName: String(state.settings.signatoryName || 'Prasad M Bhunje').slice(0, 128),
-            signatoryDesignation: String(
-              state.settings.signatoryDesignation || 'Founder & Lead Educator, Srujaan Share Market Institute'
-            ).slice(0, 128),
-            updatedAt: new Date().toISOString(),
-            serverUpdatedAt: serverTimestamp()
-          }),
-          { merge: true }
-        ),
-      { maxAttempts: 2, baseDelayMs: 600, timeoutMs: 8000, label: 'Sync settings' }
-    );
-    recordCloudWriteSuccess();
-  } catch (e) {
-    console.warn('Firestore settings sync error:', e);
-  }
+  // Settings are stored inside the canonical master snapshot, never in a separate settings collection.
+  await autoSaveToFirestoreMaster(state);
 }
 
 export async function syncStaffToFirestore(staffList: StaffMember[]) {
-  if (!(await ensureAuthorizedSession())) return;
-  const deletedStaffIds = getDeletedIds('staff');
-  const activeStaff = (staffList || []).filter(
-    (st) => st && !(st as any).isDeleted && !deletedStaffIds.has(String(st.id || '').trim())
-  );
-  const nowIso = new Date().toISOString();
-  const items = activeStaff.map((st) => ({
-    docId: toSafeDocId(st.id),
-    payload: sanitizeForFirestore({
-      id: String(st.id).slice(0, 128),
-      name: String(st.name || '').slice(0, 128),
-      role: String(st.role || '').slice(0, 128),
-      phone: String(st.phone || '').slice(0, 32),
-      email: String(st.email || '').slice(0, 128),
-      salary: Number(st.salary) || 0,
-      joiningDate: String(st.joiningDate || '').slice(0, 32),
-      batches: String(st.batches || '').slice(0, 128),
-      status: st.status || 'Active',
-      isDeleted: false,
-      updatedAt: (st as any).updatedAt || nowIso,
-      serverUpdatedAt: serverTimestamp()
-    })
-  }));
-  await commitDirtyBatch('staff', items, deletedStaffIds);
+  const active = (staffList || []).filter(member => member && !(member as any).isDeleted);
+  await Promise.all(active.map(member => upsertCanonicalWorkspaceRecord('staff', member as any, 'id')));
 }
 
 export async function saveCourseToFirestore(c: Course) {
-  if (!(await ensureAuthorizedSession())) return;
-  try {
-    const safeId = toSafeDocId(c.id);
-    unmarkDeletedId('courses', c.id);
-    const payload = sanitizeForFirestore({
-      id: String(c.id).slice(0, 128),
-      code: String(c.code || c.id || '').slice(0, 64),
-      name: String(c.name || '').slice(0, 128),
-      duration: String(c.duration || '').slice(0, 64),
-      fee: Number(c.fee) || 0,
-      mode: String(c.mode || 'Hybrid').slice(0, 64),
-      instructor: String(c.instructor || 'Prasad Sir').slice(0, 128),
-      syllabus: String(c.syllabus || '').slice(0, 2000),
-      status: c.status || 'Active',
-      lectures: Array.isArray(c.lectures) ? c.lectures : [],
-      isDeleted: false,
-      updatedAt: new Date().toISOString(),
-      serverUpdatedAt: serverTimestamp()
-    });
-    await executeWithBackoff(
-      () => setDoc(doc(db, 'courses', safeId), payload, { merge: true }),
-      { maxAttempts: 2, baseDelayMs: 600, timeoutMs: 8000, label: `Save course ${safeId}` }
-    );
-    syncedRecordHashes.courses.set(safeId, computeRecordHash(payload));
-    recordCloudWriteSuccess();
-  } catch (e) {
-    console.warn('Firestore single course sync error:', e);
-  }
+  await upsertCanonicalWorkspaceRecord('courses', c as any, 'id');
 }
 
 export async function syncCoursesToFirestore(courses: Course[]) {
-  if (!(await ensureAuthorizedSession())) return;
-  const deletedCourseIds = getDeletedIds('courses');
-  const activeCourses = (courses || []).filter(
-    (c) => c && !(c as any).isDeleted && !deletedCourseIds.has(String(c.id || '').trim())
-  );
-  const nowIso = new Date().toISOString();
-  const items = activeCourses.map((c) => ({
-    docId: toSafeDocId(c.id),
-    payload: sanitizeForFirestore({
-      id: String(c.id).slice(0, 128),
-      code: String(c.code || c.id || '').slice(0, 64),
-      name: String(c.name || '').slice(0, 128),
-      duration: String(c.duration || '').slice(0, 64),
-      fee: Number(c.fee) || 0,
-      mode: String(c.mode || 'Hybrid').slice(0, 64),
-      instructor: String(c.instructor || 'Prasad Sir').slice(0, 128),
-      syllabus: String(c.syllabus || '').slice(0, 2000),
-      status: c.status || 'Active',
-      lectures: Array.isArray(c.lectures) ? c.lectures : [],
-      isDeleted: false,
-      updatedAt: (c as any).updatedAt || nowIso,
-      serverUpdatedAt: serverTimestamp()
-    })
-  }));
-  await commitDirtyBatch('courses', items, deletedCourseIds);
+  const active = (courses || []).filter(course => course && !(course as any).isDeleted);
+  await Promise.all(active.map(course => upsertCanonicalWorkspaceRecord('courses', course as any, 'id')));
 }
 
 /**
