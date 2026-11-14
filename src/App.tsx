@@ -554,69 +554,9 @@ export default function App() {
       }
     });
 
-    const unsubscribeStudents = subscribeToFirestoreStudents((remoteStudents) => {
-      if (Array.isArray(remoteStudents)) {
-        const tombstones = getDeletedIds('students');
-        const activeRemote = remoteStudents.filter(
-          rem => rem && !(rem as any).isDeleted && !tombstones.has(String(rem.id || ''))
-        );
-        setState(prev => {
-          const isLocalSeed = Boolean((prev as any).isSeedData);
-          const nextList: Student[] = isLocalSeed
-            ? mergeStudentsSafely([], activeRemote)
-            : mergeStudentsSafely(prev.students || [], activeRemote);
-
-          if (JSON.stringify(nextList) === JSON.stringify(prev.students)) {
-            return prev;
-          }
-
-          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-          setLastCloudSyncAt(nowStr);
-          saveCachedStudents(nextList);
-          const nextState = {
-            ...prev,
-            students: nextList
-          };
-          stateRef.current = nextState;
-          syncWindowInstituteDB(nextState);
-          saveStateToStorage(nextState, { preserveTimestamp: true });
-          console.log(`[Sync Engine] Live onSnapshot Students applied: ${nextList.length} students`);
-          return nextState;
-        });
-      }
-    });
-
-    const unsubscribeLeads = subscribeToFirestoreLeads((remoteLeads) => {
-      if (Array.isArray(remoteLeads)) {
-        const tombstones = getDeletedIds('leads');
-        const activeRemote = remoteLeads.filter(
-          rem => rem && !(rem as any).isDeleted && !tombstones.has(String(rem.id || ''))
-        );
-        setState(prev => {
-          const isLocalSeed = Boolean((prev as any).isSeedData);
-          const nextLeads: Lead[] = isLocalSeed
-            ? mergeRecordsByKeySafely([], activeRemote, 'id', 'leads')
-            : mergeRecordsByKeySafely(prev.leads || [], activeRemote, 'id', 'leads');
-
-          if (JSON.stringify(nextLeads) === JSON.stringify(prev.leads)) {
-            return prev;
-          }
-
-          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-          setLastCloudSyncAt(nowStr);
-          const nextState = {
-            ...prev,
-            leads: nextLeads
-          };
-          stateRef.current = nextState;
-          syncWindowInstituteDB(nextState);
-          saveStateToStorage(nextState, { preserveTimestamp: true });
-          console.log(`[Sync Engine] Live onSnapshot Leads applied: ${nextLeads.length} leads`);
-          return nextState;
-        });
-      }
-    });
-
+    // Student and lead views are hydrated from the same canonical master snapshot above.
+    // Separate collection listeners previously merged stale mirrors back into the UI.
+    
     // Automatic Login Hydration: immediately trigger fetchMasterSnapshotFromFirestore() & reconcile
     (async () => {
       try {
@@ -712,8 +652,6 @@ export default function App() {
 
     return () => {
       unsubscribe();
-      unsubscribeStudents();
-      unsubscribeLeads();
       unsubscribeSse();
     };
   }, [state.settings?.cloudConfig?.firebaseUrl, currentUser?.uid]);
