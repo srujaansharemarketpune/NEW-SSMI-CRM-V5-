@@ -447,49 +447,17 @@ const resolvedProjectId = pickValidEnvOrFallback(
   DEFAULT_FIREBASE_CONFIG.projectId
 );
 
-const resolvedDatabaseId = sanitizeFirestoreDatabaseId(
-  pickValidEnvOrFallback(
-    [metaEnv.VITE_FIRESTORE_DATABASE_ID, winEnv.VITE_FIRESTORE_DATABASE_ID],
-    DEFAULT_FIREBASE_CONFIG.firestoreDatabaseId
-  ),
-  resolvedProjectId
-);
-
-// Single shared Firebase configuration instance used by Auth, Firestore, and Storage across the entire app
-const isMatchingProjectEnv = resolvedProjectId === DEFAULT_FIREBASE_CONFIG.projectId;
+// Force every device and deployment to use the same Firebase project AND the default Firestore database.
+// Runtime environment overrides are intentionally ignored so a device cannot silently point at a different DB.
+const resolvedDatabaseId = '';
 export const firebaseConfig = {
-  apiKey: isMatchingProjectEnv
-    ? pickValidEnvOrFallback(
-        [metaEnv.VITE_FIREBASE_API_KEY, winEnv.VITE_FIREBASE_API_KEY],
-        DEFAULT_FIREBASE_CONFIG.apiKey
-      )
-    : DEFAULT_FIREBASE_CONFIG.apiKey,
-  authDomain: isMatchingProjectEnv
-    ? pickValidEnvOrFallback(
-        [metaEnv.VITE_FIREBASE_AUTH_DOMAIN, winEnv.VITE_FIREBASE_AUTH_DOMAIN],
-        DEFAULT_FIREBASE_CONFIG.authDomain
-      )
-    : DEFAULT_FIREBASE_CONFIG.authDomain,
+  apiKey: DEFAULT_FIREBASE_CONFIG.apiKey,
+  authDomain: DEFAULT_FIREBASE_CONFIG.authDomain,
   projectId: DEFAULT_FIREBASE_CONFIG.projectId,
-  storageBucket: isMatchingProjectEnv
-    ? pickValidEnvOrFallback(
-        [metaEnv.VITE_FIREBASE_STORAGE_BUCKET, winEnv.VITE_FIREBASE_STORAGE_BUCKET],
-        DEFAULT_FIREBASE_CONFIG.storageBucket
-      )
-    : DEFAULT_FIREBASE_CONFIG.storageBucket,
-  messagingSenderId: isMatchingProjectEnv
-    ? pickValidEnvOrFallback(
-        [metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID, winEnv.VITE_FIREBASE_MESSAGING_SENDER_ID],
-        DEFAULT_FIREBASE_CONFIG.messagingSenderId
-      )
-    : DEFAULT_FIREBASE_CONFIG.messagingSenderId,
-  appId: isMatchingProjectEnv
-    ? pickValidEnvOrFallback(
-        [metaEnv.VITE_FIREBASE_APP_ID, winEnv.VITE_FIREBASE_APP_ID],
-        DEFAULT_FIREBASE_CONFIG.appId
-      )
-    : DEFAULT_FIREBASE_CONFIG.appId,
-  firestoreDatabaseId: resolvedDatabaseId
+  storageBucket: DEFAULT_FIREBASE_CONFIG.storageBucket,
+  messagingSenderId: DEFAULT_FIREBASE_CONFIG.messagingSenderId,
+  appId: DEFAULT_FIREBASE_CONFIG.appId,
+  firestoreDatabaseId: ''
 };
 
 export const resolvedFirebaseConfig = firebaseConfig;
