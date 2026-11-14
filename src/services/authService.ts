@@ -91,9 +91,10 @@ export interface AuthSessionResult {
 export function getInitialAuthSession(): AuthSessionResult | null {
   // Only a real Firebase Auth user is an authenticated CRM session.
   // Cached local profiles may restore offline data, but never unlock cloud access.
-  if (auth.currentUser && auth.currentUser.email && isAuthorizedUser(auth.currentUser.email)) {
-    const role = getUserRole(auth.currentUser.email);
-    if (role !== 'unauthorized') return { user: auth.currentUser, role };
+  const user = auth.currentUser;
+  if (user?.email) {
+    const role = getUserRole(user.email);
+    if (role !== 'unauthorized') return { user, role };
   }
   return null;
 }
