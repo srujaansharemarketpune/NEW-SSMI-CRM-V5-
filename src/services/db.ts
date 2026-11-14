@@ -1392,9 +1392,8 @@ export async function dualWriteToCloud(
 
 /**
  * Master Fetch from Cloud:
- * Pulls the canonical Firebase Firestore workspace snapshot shared by all authorized devices. `institutes/srujaan_share_market_pune` (and `institute_master_data`),
- * Firestore sub-collections (`students` and `leads`), Custom Firebase RTDB URL, and Online Server,
- * performing Last-Write-Wins conflict resolution by `updatedAt` so newer cloud records overwrite stale local cache.
+ * Pulls the canonical Firebase Firestore workspace snapshot shared by all authorized devices.
+ * Legacy Firestore collections are used only for one-time migration when no master snapshot exists.
  */
 export async function masterFetchFromCloud(
   currentState: AppState,
@@ -1604,7 +1603,6 @@ export async function masterFetchFromCloud(
   }
 
   // Firestore canonical workspace is the sole source of truth.
-  // A separately configured RTDB mirror is write-only and must never override Firestore data.
 
   // Firestore is the only authoritative database. Never hydrate from a per-deployment server mirror.
 
@@ -1669,50 +1667,6 @@ export async function masterFetchFromCloud(
  * (`${firebaseUrl}/srujaan_main_store.json`) if configured by the user.
  * Silently closes on error so zero console errors occur when not configured.
  */
-export function setupFirebaseSseListener(
-  firebaseUrl: string | undefined,
-  authToken: string | undefined,
-  onRemoteState: (remotePayload: any) => void
-): () => void {
-  if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
-    return () => {};
-  }
-  const clean = (firebaseUrl || '').trim();
-  if (!clean || !/^https?:\/\//i.test(clean)) {
-    return () => {};
-  }
-
-  try {
-    const base = clean.replace(/\/+$/, '').replace(/\/(srujaan_main_store|instituteDB)\.json$/i, '');
-    const tokenParam = authToken ? `?auth=${encodeURIComponent(authToken)}` : '';
-    const sse = new EventSource(`${base}/srujaan_main_store.json${tokenParam}`);
-
-    const handlePut = (event: MessageEvent) => {
-      try {
-        const packet = JSON.parse(event.data);
-        const remoteData = packet?.data;
-        if (remoteData && (remoteData.payload || Array.isArray(remoteData.students))) {
-          onRemoteState(remoteData.payload || remoteData);
-        }
-      } catch {
-        // Ignore malformed SSE packets
-      }
-    };
-
-    sse.addEventListener('put', handlePut as EventListener);
-    sse.onerror = () => {
-      sse.close();
-    };
-
-    return () => {
-      sse.removeEventListener('put', handlePut as EventListener);
-      sse.close();
-    };
-  } catch {
-    return () => {};
-  }
-}
-
 export async function checkStorageQuota(state: AppState): Promise<StorageQuotaInfo> {
   let usedKb = 120;
   let quotaMb = 2048; // default 2GB browser storage allowance
