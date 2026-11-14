@@ -44,9 +44,7 @@ import {
   deleteStudentFromFirestore,
   syncToGoogleSheets,
   syncModuleToGoogleSheets,
-  syncAndFetchGoogleWorkspace,
-  subscribeToFirestoreStudents,
-  subscribeToFirestoreLeads
+  syncAndFetchGoogleWorkspace
 } from './services/storageService';
 import { Navbar, DesktopSidebar, NavTabId, SidebarMode } from './components/Navbar';
 import { LowStorageBanner } from './components/LowStorageBanner';
