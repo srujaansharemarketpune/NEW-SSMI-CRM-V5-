@@ -1364,11 +1364,11 @@ export async function dualWriteToCloud(
       };
     }
 
+    let firestoreError: string | null = null;
     setSyncEngineWorking(true);
     try {
       // One shared storage only: Firebase Firestore canonical workspace document.
       // Do not report a successful cloud backup unless the canonical Firestore write succeeds.
-      let firestoreError: string | null = null;
       try {
         if (!auth.currentUser) {
           throw new Error('Real Google/Firebase sign-in is required on this device. Local CRM sessions cannot write to Firestore.');
