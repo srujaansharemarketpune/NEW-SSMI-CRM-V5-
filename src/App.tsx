@@ -314,6 +314,7 @@ export default function App() {
           skipPreFetch: true
         });
         if (res.ok) {
+          isSharedWorkspaceHydratedRef.current = true;
           setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
           hasUnsyncedLocalChangesRef.current = false;
         }
@@ -576,6 +577,7 @@ export default function App() {
       try {
         const res = await dualWriteToCloud(stateRef.current, { interactiveAuth: false });
         if (res.ok) {
+          isSharedWorkspaceHydratedRef.current = true;
           const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
           setLastCloudSyncAt(nowStr);
           hasUnsyncedLocalChangesRef.current = false;
@@ -671,6 +673,7 @@ export default function App() {
       if (hasUnsyncedLocalChangesRef.current) {
         const res = await dualWriteToCloud(current, { interactiveAuth: false });
         if (res.ok) {
+          isSharedWorkspaceHydratedRef.current = true;
           hasUnsyncedLocalChangesRef.current = false;
           const nowIso = new Date().toISOString();
           const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
@@ -4178,6 +4181,7 @@ export default function App() {
 
       const nowIso = new Date().toISOString();
       const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+      isSharedWorkspaceHydratedRef.current = true;
       setLastCloudSyncAt(nowStr);
       hasUnsyncedLocalChangesRef.current = false;
 
