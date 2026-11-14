@@ -1371,6 +1371,9 @@ export async function dualWriteToCloud(
     }
 
     const cloudSynced = channels.includes('Firebase Firestore');
+    if (cloudSynced && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('ssm-canonical-sync-success'));
+    }
     return {
       ok: cloudSynced,
       channels,
