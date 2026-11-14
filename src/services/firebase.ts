@@ -1277,8 +1277,7 @@ function computeSyncStatusSnapshot(): SyncStatusSnapshot {
   const realUser = auth.currentUser;
   const isLiveFirebaseAuth = Boolean(realUser && isAuthorizedUser(realUser));
   const crmSession = loadCrmUserSession();
-  const hasPreConnectedSession = Boolean(crmSession?.isAuthenticated && isAuthorizedAdminEmail(crmSession.email));
-  const isAuthValid = isLiveFirebaseAuth || hasPreConnectedSession;
+  const isAuthValid = isLiveFirebaseAuth;
   const pendingOps = getPendingSyncOperations().length;
   const totalPending = Math.max(diagPendingWritesCount, pendingOps);
 
@@ -1297,8 +1296,8 @@ function computeSyncStatusSnapshot(): SyncStatusSnapshot {
     resolvedStatus = 'Pending';
   } else if (diagCloudConnected && isLiveFirebaseAuth) {
     resolvedStatus = 'Connected';
-  } else if (hasPreConnectedSession) {
-    resolvedStatus = 'Connected';
+  } else if (!isLiveFirebaseAuth) {
+    resolvedStatus = 'Pending';
   } else {
     resolvedStatus = 'Pending';
   }
@@ -2016,23 +2015,10 @@ export async function waitForAuthReady(timeoutMs = 2000): Promise<User | null> {
  * Never sets a false 'Error' status when waiting for interactive Google sign-in.
  */
 export async function ensureAuthorizedSession(_interactive = false): Promise<boolean> {
-  if (isAuthorizedUser(auth.currentUser)) {
-    return true;
-  }
-  const crmSession = loadCrmUserSession();
-  if (crmSession && crmSession.isAuthenticated && isAuthorizedAdminEmail(crmSession.email)) {
-    return true;
-  }
-  const persisted = loadPersistedAdminSession();
-  const user = await waitForAuthReady(persisted ? 1200 : 500);
-  if (isAuthorizedUser(user)) {
-    return true;
-  }
-  if (persisted && isAuthorizedAdminEmail(persisted.email)) {
-    notifySyncStatusListeners();
-    return true;
-  }
-  return false;
+  // A locally cached CRM profile is NOT Firebase authentication. Firestore reads,
+  // writes and live listeners require a real Firebase Auth user on this device.
+  const user = await waitForAuthReady(2500);
+  return Boolean(user && isAuthorizedUser(user));
 }
 
 /**
@@ -2155,6 +2141,89 @@ export function unmarkDeletedId(collectionName: keyof DeletedRecordsRegistry, id
   }
 }
 
+/**
+ * Canonical workspace record mutation. All devices subscribe to this one document;
+ * do not write student/lead records into parallel top-level or legacy collections.
+ */
+export async function upsertCanonicalWorkspaceRecord(
+  collectionName: keyof DeletedRecordsRegistry,
+  record: Record<string, any>,
+  keyField: string = 'id'
+): Promise<boolean> {
+  if (!(await ensureAuthorizedSession())) return false;
+  const recordId = String(record?.[keyField] || record?.id || '').trim();
+  if (!recordId) return false;
+  unmarkDeletedId(collectionName, recordId);
+  const masterRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
+  const nowIso = new Date().toISOString();
+  try {
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(masterRef);
+      const remote = snap.exists() ? snap.data() : {};
+      const existing = Array.isArray(remote[collectionName]) ? remote[collectionName] : [];
+      const incoming = { ...record, [keyField]: recordId, id: recordId, isDeleted: false, updatedAt: record.updatedAt || nowIso };
+      const merged = collectionName === 'students'
+        ? mergeStudentsSafely(existing as Student[], [incoming as unknown as Student])
+        : mergeRecordsByKeySafely(existing, [incoming], keyField, collectionName);
+      const deletedRecords = { ...readDeletedRegistry(), ...(remote.deletedRecords || {}) } as DeletedRecordsRegistry;
+      deletedRecords[collectionName] = (deletedRecords[collectionName] || []).filter(id => String(id) !== recordId);
+      transaction.set(masterRef, {
+        ...remote,
+        [collectionName]: merged.filter((item: any) => String(item?.[keyField] || item?.id || '') !== recordId || !deletedRecords[collectionName].includes(recordId)),
+        deletedRecords,
+        workspaceId: SHARED_INSTITUTE_ROOT_ID,
+        syncSchemaVersion: 2,
+        revision: Number(remote.revision || 0) + 1,
+        updatedAt: nowIso,
+        serverUpdatedAt: serverTimestamp()
+      }, { merge: false });
+    });
+    recordCloudWriteSuccess();
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/${collectionName}/${recordId}`);
+    return false;
+  }
+}
+
+/** Delete a record by recording a shared tombstone in the canonical master document. */
+export async function deleteCanonicalWorkspaceRecord(
+  collectionName: keyof DeletedRecordsRegistry,
+  recordId: string,
+  keyField: string = 'id'
+): Promise<boolean> {
+  const cleanId = String(recordId || '').trim();
+  if (!cleanId) return false;
+  markDeletedId(collectionName, cleanId);
+  if (!(await ensureAuthorizedSession())) return false;
+  const masterRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
+  const nowIso = new Date().toISOString();
+  try {
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(masterRef);
+      const remote = snap.exists() ? snap.data() : {};
+      const deletedRecords = { ...readDeletedRegistry(), ...(remote.deletedRecords || {}) } as DeletedRecordsRegistry;
+      deletedRecords[collectionName] = Array.from(new Set([...(deletedRecords[collectionName] || []), cleanId]));
+      const existing = Array.isArray(remote[collectionName]) ? remote[collectionName] : [];
+      transaction.set(masterRef, {
+        ...remote,
+        [collectionName]: existing.filter((item: any) => String(item?.[keyField] || item?.id || '') !== cleanId),
+        deletedRecords,
+        workspaceId: SHARED_INSTITUTE_ROOT_ID,
+        syncSchemaVersion: 2,
+        revision: Number(remote.revision || 0) + 1,
+        updatedAt: nowIso,
+        serverUpdatedAt: serverTimestamp()
+      }, { merge: false });
+    });
+    recordCloudWriteSuccess();
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/${collectionName}/${cleanId}`);
+    return false;
+  }
+}
+
 export function clearAllDeletedTombstones(): void {
   writeDeletedRegistry({
     students: [],
@@ -2182,8 +2251,6 @@ export function getSyncDiagnosticsReport(): SyncDiagnosticsReport {
     ? 'Offline'
     : isLiveToken
     ? 'Connected (Authenticated)'
-    : hasPreConnected
-    ? 'Connected (Authenticated)'
     : 'Unauthenticated (Local Only)';
 
   return {
@@ -2192,7 +2259,7 @@ export function getSyncDiagnosticsReport(): SyncDiagnosticsReport {
     firestoreDatabaseId: resolvedFirebaseConfig.firestoreDatabaseId || '(default)',
     activeAuthUid: realUser?.uid || crmSession?.uid || 'srujaan_master_admin_root',
     activeAuthEmail: realUser?.email || crmSession?.email || PRIMARY_ADMIN_EMAIL,
-    isRealFirebaseAuthActive: isLiveToken || hasPreConnected,
+    isRealFirebaseAuthActive: isLiveToken,
     collectionPaths: [
       `/institutes/${INSTITUTE_WORKSPACE_ID}`,
       `/institutes/${INSTITUTE_WORKSPACE_ID}/students/{studentId}`,
