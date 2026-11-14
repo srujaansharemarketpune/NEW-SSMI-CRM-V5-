@@ -30,9 +30,9 @@ export const SECONDARY_AUTHORIZED_EMAIL = 'udayhajare18@gmail.com';
 export const DEFAULT_MASTER_SHEET_URL =
   'https://docs.google.com/spreadsheets/d/1SrujaanShareMarketMasterDatabasePune/edit';
 export const DEFAULT_GOOGLE_FORM_URL =
-  'https://docs.google.com/forms/d/e/1FAIpQLScD8yH9K4m7P1J4Z-Srujaan-Admission-Form/viewform';
+  'https://docs.google.com/forms/d/e/1FAIpQLSdXcgLIUKZ_T-ImDJ9btMk6hkox08dnR2m1DVf_4cntDqHGxg/viewform?usp=header';
 export const DEFAULT_GOOGLE_FORM_EMBED_URL =
-  'https://docs.google.com/forms/d/e/1FAIpQLScD8yH9K4m7P1J4Z-Srujaan-Admission-Form/viewform?embedded=true';
+  'https://docs.google.com/forms/d/e/1FAIpQLSdXcgLIUKZ_T-ImDJ9btMk6hkox08dnR2m1DVf_4cntDqHGxg/viewform?embedded=true';
 
 export const CLOUD_CONFIG_STORAGE_KEY = 'ssmi_cloud_integrations_config_v3';
 export const IDB_SYNC_QUEUE_KEY = 'SSMI_PENDING_SYNC_QUEUE_IDB_V3';
