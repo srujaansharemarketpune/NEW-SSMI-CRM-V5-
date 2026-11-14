@@ -3426,40 +3426,76 @@ export async function syncFullStateToFirestore(state: AppState, forceReplace = f
   }
 }
 
+async function fetchLegacyCollectionRecords(
+  collectionName: keyof DeletedRecordsRegistry,
+  keyField: string
+): Promise<any[]> {
+  // One-time migration fallback only. Callers reach this only when no master snapshot exists.
+  const [workspaceSnap, legacySnap, topSnap] = await Promise.all([
+    getDocsWithLocationFallback(getColRef(collectionName), 3000),
+    getDocsWithLocationFallback(getLegacyColRef(collectionName), 3000),
+    getDocsWithLocationFallback(collection(db, collectionName), 3000)
+  ]);
+  const records: any[] = [];
+  [topSnap, legacySnap, workspaceSnap].forEach((snapshot) => {
+    if (!snapshot || snapshot.empty) return;
+    snapshot.forEach((docSnap: any) => {
+      const raw = docSnap.data();
+      const id = String(raw?.[keyField] || raw?.id || docSnap.id || '').trim();
+      if (!raw || !id) return;
+      if (raw.isDeleted === true || raw.deletedAt) {
+        markDeletedId(collectionName, id);
+        return;
+      }
+      records.push({ ...raw, [keyField]: id, id: raw.id || id });
+    });
+  });
+  return collectionName === 'students'
+    ? mergeStudentsSafely([], records)
+    : mergeRecordsByKeySafely([], records, keyField, collectionName);
+}
+
 export async function fetchCoursesFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
   const master = await fetchMasterSnapshotFromFirestore();
-  return filterActiveRecords(Array.isArray(master?.courses) ? master.courses : [], 'courses', 'id');
+  if (master) return filterActiveRecords(Array.isArray(master.courses) ? master.courses : [], 'courses', 'id');
+  return fetchLegacyCollectionRecords('courses', 'id');
 }
 
 export async function fetchStudentsFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
   const master = await fetchMasterSnapshotFromFirestore();
-  return filterActiveRecords(Array.isArray(master?.students) ? master.students : [], 'students', 'id');
+  if (master) return filterActiveRecords(Array.isArray(master.students) ? master.students : [], 'students', 'id');
+  return fetchLegacyCollectionRecords('students', 'id');
 }
 
 export async function fetchLeadsFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
   const master = await fetchMasterSnapshotFromFirestore();
-  return filterActiveRecords(Array.isArray(master?.leads) ? master.leads : [], 'leads', 'id');
+  if (master) return filterActiveRecords(Array.isArray(master.leads) ? master.leads : [], 'leads', 'id');
+  return fetchLegacyCollectionRecords('leads', 'id');
 }
 
 export async function fetchBatchesFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
   const master = await fetchMasterSnapshotFromFirestore();
-  return filterActiveRecords(Array.isArray(master?.batches) ? master.batches : [], 'batches', 'code');
+  if (master) return filterActiveRecords(Array.isArray(master.batches) ? master.batches : [], 'batches', 'code');
+  return fetchLegacyCollectionRecords('batches', 'code');
 }
 
 export async function fetchStaffFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
   const master = await fetchMasterSnapshotFromFirestore();
-  return filterActiveRecords(Array.isArray(master?.staff) ? master.staff : [], 'staff', 'id');
+  if (master) return filterActiveRecords(Array.isArray(master.staff) ? master.staff : [], 'staff', 'id');
+  return fetchLegacyCollectionRecords('staff', 'id');
 }
 
 export async function fetchSettingsFromFirestore(): Promise<Record<string, any> | null> {
   if (!(await ensureAuthorizedSession())) return null;
   const master = await fetchMasterSnapshotFromFirestore();
-  return master?.settings && typeof master.settings === 'object' ? master.settings : null;
+  if (master) return master.settings && typeof master.settings === 'object' ? master.settings : {};
+  const legacySettings = await getDocWithLocationFallback(doc(db, 'settings', 'institute_profile'), 3000);
+  return legacySettings?.exists() ? legacySettings.data() : null;
 }
 
 /**
