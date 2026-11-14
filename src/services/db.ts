@@ -1334,7 +1334,7 @@ export async function dualWriteToCloud(
     stateToPush.lastSavedAt = timestamp;
 
     await saveStateToStorage(stateToPush, { preserveTimestamp: true });
-    const unifiedDB = syncWindowInstituteDB(stateToPush);
+    syncWindowInstituteDB(stateToPush);
     const channels: string[] = ['Local Cache'];
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -1354,6 +1354,9 @@ export async function dualWriteToCloud(
       // One shared storage only: Firebase Firestore canonical workspace document.
       // Do not report a successful cloud backup unless the canonical Firestore write succeeds.
       try {
+        if (options?.interactiveAuth && !auth.currentUser) {
+          await signInWithGoogle();
+        }
         if (!auth.currentUser) {
           throw new Error('Real Google/Firebase sign-in is required on this device. Local CRM sessions cannot write to Firestore.');
         }
