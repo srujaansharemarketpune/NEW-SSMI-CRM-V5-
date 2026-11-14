@@ -3611,17 +3611,64 @@ export async function autoSaveToFirestoreMaster(
       deletedRecords: readDeletedRegistry()
     });
 
-    const masterDocRef = doc(db, 'institutes', userId);
+    // One canonical document is the source of truth for every device.
+    // Merge record-level changes transactionally so stale devices cannot overwrite newer cloud data.
     const sharedWorkspaceRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
-    const legacyWorkspaceRef = doc(db, 'institutes', LEGACY_WORKSPACE_ID);
     await executeWithBackoff(
-      () =>
-        Promise.all([
-          setDoc(sharedWorkspaceRef, { ...masterPayload, workspaceId: SHARED_INSTITUTE_ROOT_ID }, { merge: true }),
-          setDoc(legacyWorkspaceRef, { ...masterPayload, workspaceId: SHARED_INSTITUTE_ROOT_ID }, { merge: true }),
-          setDoc(masterDocRef, { ...masterPayload, workspaceId: SHARED_INSTITUTE_ROOT_ID }, { merge: true })
-        ]),
-      { maxAttempts: 3, baseDelayMs: 600, timeoutMs: 12000, label: 'Write master snapshot' }
+      () => runTransaction(db, async (transaction) => {
+        const currentSnap = await transaction.get(sharedWorkspaceRef);
+        const remote = currentSnap.exists() ? currentSnap.data() : {};
+        if (remote.deletedRecords) mergeRemoteDeletedRegistry(remote.deletedRecords);
+
+        const students = mergeStudentsSafely(
+          Array.isArray(remote.students) ? remote.students : [],
+          studentsList
+        );
+        const leads = mergeRecordsByKeySafely(
+          Array.isArray(remote.leads) ? remote.leads : [],
+          Array.isArray(updatedData.leads) ? updatedData.leads : [],
+          'id',
+          'leads'
+        );
+        const batches = mergeRecordsByKeySafely(
+          Array.isArray(remote.batches) ? remote.batches : [],
+          Array.isArray(updatedData.batches) ? updatedData.batches : [],
+          'code',
+          'batches'
+        );
+        const courses = mergeRecordsByKeySafely(
+          Array.isArray(remote.courses) ? remote.courses : [],
+          Array.isArray(updatedData.courses) ? updatedData.courses : [],
+          'id',
+          'courses'
+        );
+        const staff = mergeRecordsByKeySafely(
+          Array.isArray(remote.staff) ? remote.staff : [],
+          Array.isArray(updatedData.staff) ? updatedData.staff : [],
+          'id',
+          'staff'
+        );
+        const deleted = readDeletedRegistry();
+        const finalPayload = sanitizeForFirestore({
+          ...remote,
+          ...masterPayload,
+          students: students.filter((item: any) => !deleted.students.includes(String(item.id))),
+          leads: leads.filter((item: any) => !deleted.leads.includes(String(item.id))),
+          batches: batches.filter((item: any) => !deleted.batches.includes(String(item.code || item.id))),
+          courses: courses.filter((item: any) => !deleted.courses.includes(String(item.id))),
+          staff: staff.filter((item: any) => !deleted.staff.includes(String(item.id))),
+          attendance: mergeAttendanceSafely(remote.attendance || {}, updatedData.attendance || {}),
+          settings: { ...(remote.settings || {}), ...(masterPayload.settings || {}) },
+          deletedRecords: deleted,
+          updatedAt: nowIso,
+          revision: Number(remote.revision || 0) + 1,
+          syncSchemaVersion: 2,
+          serverUpdatedAt: serverTimestamp(),
+          workspaceId: SHARED_INSTITUTE_ROOT_ID
+        });
+        transaction.set(sharedWorkspaceRef, finalPayload, { merge: false });
+      }),
+      { maxAttempts: 5, baseDelayMs: 500, timeoutMs: 15000, label: 'Transactional canonical master sync' }
     );
     recordCloudWriteSuccess();
     console.log(`[Sync Engine] Cloud push success to institutes/${SHARED_INSTITUTE_ROOT_ID} & institutes/${userId}`);
@@ -3664,9 +3711,14 @@ export async function restoreJsonToFirestoreMaster(parsedData: Record<string, an
       deletedRecords: readDeletedRegistry()
     });
 
+    // Explicit backup restore is an intentional full replacement of the canonical workspace snapshot.
     await executeWithBackoff(
-      () => setDoc(doc(db, 'institutes', 'institute_master_data'), docPayload, { merge: true }),
-      { maxAttempts: 3, baseDelayMs: 600, timeoutMs: 12000, label: 'Restore master JSON snapshot' }
+      () => setDoc(
+        doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID),
+        { ...docPayload, workspaceId: SHARED_INSTITUTE_ROOT_ID, syncSchemaVersion: 2, revision: Date.now() },
+        { merge: false }
+      ),
+      { maxAttempts: 3, baseDelayMs: 600, timeoutMs: 12000, label: 'Restore canonical master JSON snapshot' }
     );
     recordCloudWriteSuccess();
     return true;
@@ -3689,19 +3741,27 @@ export async function fetchMasterSnapshotFromFirestore(
     const legacyRef = doc(db, 'institutes', LEGACY_WORKSPACE_ID);
     const fallbackRef = doc(db, 'institutes', userId);
     const [wsSnap, legacySnap, masterSnap] = await Promise.all([
-      getDocWithLocationFallback(primaryRef, 3000),
-      getDocWithLocationFallback(legacyRef, 3000),
-      getDocWithLocationFallback(fallbackRef, 3000)
+      getDocWithLocationFallback(primaryRef, 5000),
+      getDocWithLocationFallback(legacyRef, 5000),
+      getDocWithLocationFallback(fallbackRef, 5000)
     ]);
-    // Pick the snapshot with the newest updatedAt timestamp across shared paths
     const candidates = [wsSnap, legacySnap, masterSnap].filter(s => s && s.exists());
     if (candidates.length === 0) return null;
-    candidates.sort((a, b) => {
-      const dA = a.data();
-      const dB = b.data();
-      return parseRecordTimestampMs(dB) - parseRecordTimestampMs(dA);
-    });
-    const snap = candidates[0];
+
+    // During migration only, select the newest legacy snapshot and promote it once.
+    const canonicalReady = Boolean(wsSnap?.exists() && Number(wsSnap.data()?.syncSchemaVersion || 0) >= 2);
+    candidates.sort((a, b) => parseRecordTimestampMs(b.data()) - parseRecordTimestampMs(a.data()));
+    const snap = canonicalReady ? wsSnap : candidates[0];
+    if (snap && snap.exists() && snap.ref.path !== primaryRef.path) {
+      const promoted = {
+        ...snap.data(),
+        workspaceId: SHARED_INSTITUTE_ROOT_ID,
+        syncSchemaVersion: 2,
+        revision: Number(snap.data()?.revision || 0) + 1,
+        canonicalizedAt: serverTimestamp()
+      };
+      await setDoc(primaryRef, promoted, { merge: false });
+    }
     if (snap && snap.exists()) {
       recordCloudReadSuccess();
       const data = snap.data();
@@ -3921,8 +3981,6 @@ export function subscribeToCloudUpdates(
   onUpdateCallback: (data: any, hasPendingWrites: boolean, fromCache: boolean) => void
 ): () => void {
   let activeUnsubMaster: (() => void) | null = null;
-  let activeUnsubWorkspace: (() => void) | null = null;
-  let activeUnsubLegacy: (() => void) | null = null;
   let isCancelled = false;
 
   const handleIncomingSnap = (snap: any) => {
@@ -3948,33 +4006,15 @@ export function subscribeToCloudUpdates(
       return;
     }
     try {
-      const masterDocRef = doc(db, 'institutes', userId);
-      const workspaceDocRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
-      const legacyDocRef = doc(db, 'institutes', LEGACY_WORKSPACE_ID);
-      incrementActiveListenerCount(3);
-      activeUnsubWorkspace = onSnapshot(
-        workspaceDocRef,
-        { includeMetadataChanges: true },
-        handleIncomingSnap,
-        (error) => {
-          console.warn('[Firebase Sync Notice]: Shared workspace listener notice:', error);
-          recordSyncError(error?.message || 'Connection interrupted', error);
-        }
-      );
-      activeUnsubLegacy = onSnapshot(
-        legacyDocRef,
-        { includeMetadataChanges: true },
-        handleIncomingSnap,
-        (error) => {
-          console.warn('[Firebase Sync Notice]: Legacy workspace listener notice:', error);
-        }
-      );
+      // All clients subscribe to exactly the same canonical workspace document.
+      const canonicalRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
+      incrementActiveListenerCount(1);
       activeUnsubMaster = onSnapshot(
-        masterDocRef,
+        canonicalRef,
         { includeMetadataChanges: true },
         handleIncomingSnap,
         (error) => {
-          console.warn('[Firebase Sync Notice]: Real-time listener notice:', error);
+          console.warn('[Firebase Sync Notice]: Canonical workspace listener notice:', error);
           recordSyncError(error?.message || 'Connection interrupted', error);
         }
       );
@@ -4010,16 +4050,6 @@ export function subscribeToCloudUpdates(
       } catch {
         // ignore
       }
-    }
-    if (activeUnsubWorkspace) {
-      incrementActiveListenerCount(-1);
-      activeUnsubWorkspace();
-      activeUnsubWorkspace = null;
-    }
-    if (activeUnsubLegacy) {
-      incrementActiveListenerCount(-1);
-      activeUnsubLegacy();
-      activeUnsubLegacy = null;
     }
     if (activeUnsubMaster) {
       incrementActiveListenerCount(-1);
