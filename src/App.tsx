@@ -68,8 +68,7 @@ import {
   logoutAdmin,
   checkRedirectResult,
   ensureBrowserSessionPersistence,
-  getInitialAuthSession,
-  loginWithDefaultMasterAdmin
+  getInitialAuthSession
 } from './services/authService';
 import {
   StudentModal,
@@ -4542,13 +4541,6 @@ export default function App() {
         authUserEmail={masterAdminEmail || getCurrentActorEmail()}
         authUserName={currentUser?.displayName || (isMasterAdmin ? 'Prasad Sir' : 'Uday Hajare')}
         isMasterAdmin={isMasterAdmin}
-        onQuickResumeMasterAdmin={() => {
-          const resumed = loginWithDefaultMasterAdmin();
-          setCurrentUser(resumed.user);
-          setUserRole(resumed.role);
-          authEmailRef.current = resumed.user.email?.toLowerCase().trim() || PRIMARY_ADMIN_EMAIL;
-          showToast('Master Admin session active (srujaansharemarketpune@gmail.com)');
-        }}
         onSignOut={handleSignOut}
         sidebarMode={sidebarMode}
         onSidebarModeChange={handleSidebarModeChange}
