@@ -13,8 +13,7 @@ import {
   auth,
   savePersistedAdminSession,
   loadPersistedAdminSession,
-  clearPersistedAdminSession,
-  loadCrmUserSession
+  clearPersistedAdminSession
 } from './firebase';
 
 export const PRIMARY_ADMIN_EMAIL = 'srujaansharemarketpune@gmail.com'.toLowerCase();
