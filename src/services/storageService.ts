@@ -33,7 +33,9 @@ import {
   getDeterministicPaymentId,
   getDeterministicStaffId,
   getDeterministicCourseId,
-  getDeterministicExpenseId
+  getDeterministicExpenseId,
+  upsertCanonicalWorkspaceRecord,
+  deleteCanonicalWorkspaceRecord
 } from './firebase';
 
 export {
@@ -701,151 +703,17 @@ export async function flushPendingSyncQueue(): Promise<number> {
  * Tier 2: Firebase Firestore Student Mutations (Shared Path: `institutes/srujaan_share_market_pune/students`)
  */
 export async function saveStudentToFirestore(student: Student): Promise<boolean> {
-  unmarkDeletedId('students', student.id);
-  if (!(await ensureAuthorizedSession())) {
-    return false;
-  }
-  try {
-    const nowIso = (student as any).updatedAt || new Date().toISOString();
-    const safeId = String(student.id).trim();
-    const sharedRef = getDocRef('students', safeId);
-    const sharedAdmRef = getDocRef('admissions', safeId);
-    const legacyRef = getLegacyDocRef('students', safeId);
-    const topLevelRef = doc(db, 'students', safeId);
-    const topLevelAdmRef = doc(db, 'admissions', safeId);
-    const paidFees = Array.isArray(student.milestones)
-      ? student.milestones.filter(m => m.status === 'Paid').reduce((acc, m) => acc + (Number(m.amount) || 0), 0)
-      : Number((student as any).paidFees ?? (student as any).feesPaid ?? 0);
-    const totalFees = Number(student.netFee || student.grossFee || 0);
-    const pendingFees = Math.max(0, totalFees - paidFees);
-    const firestoreData = {
-      id: safeId.slice(0, 128),
-      regId: String(student.regId || '').slice(0, 64),
-      name: String(student.name || '').slice(0, 128),
-      phone: String(student.phone || '').slice(0, 32),
-      whatsapp: String(student.whatsapp || '').slice(0, 32),
-      email: String(student.email || '').slice(0, 128),
-      address: String(student.address || '').slice(0, 256),
-      course: String(student.course || '').slice(0, 128),
-      batch: String(student.batch || '').slice(0, 64),
-      status: student.status || 'Active',
-      source: String(student.source || 'Direct').slice(0, 64),
-      netFee: totalFees,
-      grossFee: Number(student.grossFee) || totalFees,
-      discount: Number(student.discount) || 0,
-      totalFees,
-      feesPaid: paidFees,
-      pendingFees,
-      enrollDate: String(student.enrollDate || '').slice(0, 32),
-      joinDate: String(student.joinDate || student.enrollDate || '').slice(0, 32),
-      docs: String(student.docs || '').slice(0, 256),
-      notes: String(student.notes || '').slice(0, 500),
-      milestones: Array.isArray(student.milestones) ? student.milestones : [],
-      isDeleted: false,
-      syncStatus: 'synced',
-      workspaceId: SHARED_INSTITUTE_ROOT_ID,
-      updatedAt: nowIso,
-      serverUpdatedAt: serverTimestamp()
-    };
-    await Promise.all([
-      setDoc(sharedRef, firestoreData, { merge: true }),
-      setDoc(sharedAdmRef, firestoreData, { merge: true }),
-      setDoc(legacyRef, firestoreData, { merge: true }),
-      setDoc(topLevelRef, firestoreData, { merge: true }),
-      setDoc(topLevelAdmRef, firestoreData, { merge: true })
-    ]);
-    recordCloudWriteSuccess();
-    return true;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/students/${student.id}`);
-    return false;
-  }
+  // The canonical workspace snapshot is the only database. App state autosave also
+  // writes the full snapshot; this mutation makes standalone student actions realtime.
+  return upsertCanonicalWorkspaceRecord('students', student as any, 'id');
 }
 
-/**
- * Tier 2: Firebase Firestore Lead Mutations (Shared Path: `institutes/srujaan_share_market_pune/leads` & `inquiries`)
- */
 export async function saveLeadToFirestore(lead: Lead): Promise<boolean> {
-  unmarkDeletedId('leads', lead.id);
-  if (!(await ensureAuthorizedSession())) {
-    return false;
-  }
-  try {
-    const nowIso = (lead as any).updatedAt || new Date().toISOString();
-    const safeId = String(lead.id).trim();
-    const sharedRef = getDocRef('leads', safeId);
-    const sharedInqRef = getDocRef('inquiries', safeId);
-    const legacyRef = getLegacyDocRef('leads', safeId);
-    const topLevelRef = doc(db, 'leads', safeId);
-    const topLevelInqRef = doc(db, 'inquiries', safeId);
-    const firestoreData = {
-      id: safeId.slice(0, 128),
-      name: String(lead.name || '').slice(0, 128),
-      phone: String(lead.phone || '').slice(0, 32),
-      email: String(lead.email || '').slice(0, 128),
-      locality: String(lead.locality || '').slice(0, 128),
-      course: String(lead.course || '').slice(0, 128),
-      source: String(lead.source || 'AI Assistant').slice(0, 64),
-      stage: String(lead.stage || 'New Enquiry').slice(0, 64),
-      intent: lead.intent || 'Hot',
-      enquiryDate: String(lead.enquiryDate || nowIso.split('T')[0]).slice(0, 32),
-      followUpDate: String(lead.followUpDate || '').slice(0, 32),
-      followUpTime: String(lead.followUpTime || '11:00 AM').slice(0, 32),
-      lastContact: String(lead.lastContact || nowIso.split('T')[0]).slice(0, 32),
-      mode: String(lead.mode || 'Offline Classroom').slice(0, 64),
-      staff: String(lead.staff || 'Prasad Sir').slice(0, 128),
-      objection: String(lead.objection || 'None').slice(0, 128),
-      notes: String(lead.notes || '').slice(0, 1000),
-      isDeleted: false,
-      syncStatus: 'synced',
-      workspaceId: SHARED_INSTITUTE_ROOT_ID,
-      updatedAt: nowIso,
-      serverUpdatedAt: serverTimestamp()
-    };
-    await Promise.all([
-      setDoc(sharedRef, firestoreData, { merge: true }),
-      setDoc(sharedInqRef, firestoreData, { merge: true }),
-      setDoc(legacyRef, firestoreData, { merge: true }),
-      setDoc(topLevelRef, firestoreData, { merge: true }),
-      setDoc(topLevelInqRef, firestoreData, { merge: true })
-    ]);
-    recordCloudWriteSuccess();
-    return true;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/leads/${lead.id}`);
-    return false;
-  }
+  return upsertCanonicalWorkspaceRecord('leads', lead as any, 'id');
 }
 
 export async function deleteStudentFromFirestore(studentId: string): Promise<boolean> {
-  markDeletedId('students', studentId);
-  if (!(await ensureAuthorizedSession())) {
-    return false;
-  }
-  try {
-    const safeId = String(studentId).trim();
-    const nowIso = new Date().toISOString();
-    const tombstonePayload = {
-      id: safeId,
-      isDeleted: true,
-      deletedAt: nowIso,
-      updatedAt: nowIso,
-      serverUpdatedAt: serverTimestamp(),
-      workspaceId: SHARED_INSTITUTE_ROOT_ID
-    };
-    await Promise.all([
-      setDoc(getDocRef('students', safeId), tombstonePayload, { merge: true }),
-      setDoc(getDocRef('admissions', safeId), tombstonePayload, { merge: true }),
-      setDoc(getLegacyDocRef('students', safeId), tombstonePayload, { merge: true }),
-      setDoc(doc(db, 'students', safeId), tombstonePayload, { merge: true }),
-      setDoc(doc(db, 'admissions', safeId), tombstonePayload, { merge: true })
-    ]);
-    recordCloudWriteSuccess();
-    return true;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/students/${studentId}`);
-    return false;
-  }
+  return deleteCanonicalWorkspaceRecord('students', studentId, 'id');
 }
 
 export async function fetchStudentsFromFirestore(): Promise<Student[]> {
