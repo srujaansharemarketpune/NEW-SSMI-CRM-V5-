@@ -1476,12 +1476,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 export async function testConnection(): Promise<boolean> {
   try {
-    const serverSnap = await withTimeout(getDocFromServer(doc(db, 'institutes', 'institute_master_data')), 5000, null as any);
+    const serverSnap = await withTimeout(getDocFromServer(doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID)), 5000, null as any);
     if (serverSnap) {
       recordCloudReadSuccess();
       return true;
     }
-    const cachedSnap = await withTimeout(getDoc(doc(db, 'institutes', 'institute_master_data')), 3000, null as any);
+    const cachedSnap = await withTimeout(getDoc(doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID)), 3000, null as any);
     if (cachedSnap) {
       recordCloudReadSuccess();
       return true;
@@ -2215,8 +2215,8 @@ export function getSyncDiagnosticsReport(): SyncDiagnosticsReport {
     projectId: `${ACTIVE_FIREBASE_PROJECT_NAME} (${ACTIVE_FIREBASE_PROJECT_ID})`,
     appId: resolvedFirebaseConfig.appId || DEFAULT_FIREBASE_CONFIG.appId,
     firestoreDatabaseId: resolvedFirebaseConfig.firestoreDatabaseId || '(default)',
-    activeAuthUid: realUser?.uid || crmSession?.uid || 'srujaan_master_admin_root',
-    activeAuthEmail: realUser?.email || crmSession?.email || PRIMARY_ADMIN_EMAIL,
+    activeAuthUid: realUser?.uid || 'Not signed in',
+    activeAuthEmail: realUser?.email || '',
     isRealFirebaseAuthActive: isLiveToken,
     // All CRM modules share one authoritative Firestore document across every device.
     collectionPaths: [`/institutes/${INSTITUTE_WORKSPACE_ID}`],
