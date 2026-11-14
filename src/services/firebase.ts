@@ -3712,64 +3712,60 @@ export async function fetchMasterSnapshotFromFirestore(
   if (!(await ensureAuthorizedSession())) return null;
   try {
     const primaryRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
-    const legacyRef = doc(db, 'institutes', LEGACY_WORKSPACE_ID);
-    const fallbackRef = doc(db, 'institutes', userId);
-    const [wsSnap, legacySnap, masterSnap] = await Promise.all([
-      getDocWithLocationFallback(primaryRef, 5000),
-      getDocWithLocationFallback(legacyRef, 5000),
-      getDocWithLocationFallback(fallbackRef, 5000)
-    ]);
-    const candidates = [wsSnap, legacySnap, masterSnap].filter(s => s && s.exists());
-    if (candidates.length === 0) return null;
+    let snap: any = await getDocWithLocationFallback(primaryRef, 5000);
+    const canonicalReady = Boolean(snap?.exists() && Number(snap.data()?.syncSchemaVersion || 0) >= 2);
 
-    // During migration only, select the newest legacy snapshot and promote it once.
-    const canonicalReady = Boolean(wsSnap?.exists() && Number(wsSnap.data()?.syncSchemaVersion || 0) >= 2);
-    candidates.sort((a, b) => parseRecordTimestampMs(b.data()) - parseRecordTimestampMs(a.data()));
-    const snap = canonicalReady ? wsSnap : candidates[0];
-    if (snap && snap.exists() && snap.ref.path !== primaryRef.path) {
-      const promoted = {
-        ...snap.data(),
-        workspaceId: SHARED_INSTITUTE_ROOT_ID,
-        syncSchemaVersion: 2,
-        revision: Number(snap.data()?.revision || 0) + 1,
-        canonicalizedAt: serverTimestamp()
-      };
-      await setDoc(primaryRef, promoted, { merge: false });
-    }
-    if (snap && snap.exists()) {
-      recordCloudReadSuccess();
-      const data = snap.data();
-      if (data?.deletedRecords) {
-        mergeRemoteDeletedRegistry(data.deletedRecords);
+    // Legacy paths are migration-only. Once schema v2 exists, never read them again.
+    if (!canonicalReady) {
+      const [legacySnap, masterSnap] = await Promise.all([
+        getDocWithLocationFallback(doc(db, 'institutes', LEGACY_WORKSPACE_ID), 5000),
+        getDocWithLocationFallback(doc(db, 'institutes', userId), 5000)
+      ]);
+      const candidates = [snap, legacySnap, masterSnap].filter((item) => item && item.exists());
+      candidates.sort((left, right) => parseRecordTimestampMs(right.data()) - parseRecordTimestampMs(left.data()));
+      snap = candidates[0] || null;
+      if (snap && snap.ref.path !== primaryRef.path) {
+        const promoted = {
+          ...snap.data(),
+          workspaceId: SHARED_INSTITUTE_ROOT_ID,
+          syncSchemaVersion: 2,
+          revision: Number(snap.data()?.revision || 0) + 1,
+          canonicalizedAt: serverTimestamp()
+        };
+        await setDoc(primaryRef, promoted, { merge: false });
       }
-      const root = data?.payload ? data.payload : data;
-      const students = Array.isArray(root?.students) ? root.students : [];
-      const fees = Array.isArray(root?.fees)
-        ? root.fees
-        : Array.isArray(root?.fee_ledger)
-        ? root.fee_ledger
-        : buildFeeLedgerFromStudents(students);
-      return {
-        ...root,
-        workspaceId: INSTITUTE_WORKSPACE_ID,
-        students,
-        leads: Array.isArray(root?.leads) ? root.leads : [],
-        batches: Array.isArray(root?.batches) ? root.batches : [],
-        courses: Array.isArray(root?.courses) ? root.courses : [],
-        staff: Array.isArray(root?.staff) ? root.staff : [],
-        settings: root?.settings || {},
-        fees,
-        fee_ledger: fees,
-        updatedAt: data?.updatedAt || root?.updatedAt || data?.lastSavedAt || ''
-      };
     }
-    return null;
+
+    if (!snap || !snap.exists()) return null;
+    recordCloudReadSuccess();
+    const data = snap.data();
+    if (data?.deletedRecords) mergeRemoteDeletedRegistry(data.deletedRecords);
+    const root = data?.payload ? data.payload : data;
+    const students = Array.isArray(root?.students) ? root.students : [];
+    const fees = Array.isArray(root?.fees)
+      ? root.fees
+      : Array.isArray(root?.fee_ledger)
+      ? root.fee_ledger
+      : buildFeeLedgerFromStudents(students);
+    return {
+      ...root,
+      workspaceId: INSTITUTE_WORKSPACE_ID,
+      syncSchemaVersion: Number(data?.syncSchemaVersion || root?.syncSchemaVersion || 2),
+      students,
+      leads: Array.isArray(root?.leads) ? root.leads : [],
+      batches: Array.isArray(root?.batches) ? root.batches : [],
+      courses: Array.isArray(root?.courses) ? root.courses : [],
+      staff: Array.isArray(root?.staff) ? root.staff : [],
+      settings: root?.settings || {},
+      fees,
+      fee_ledger: fees,
+      updatedAt: data?.updatedAt || root?.updatedAt || data?.lastSavedAt || ''
+    };
   } catch (err) {
     console.warn('fetchMasterSnapshotFromFirestore notice:', err);
     return null;
   }
 }
-
 export const fetchMasterInstituteFromFirestore = fetchMasterSnapshotFromFirestore;
 
 export async function syncFullStateToFirestore(state: AppState, forceReplace = false): Promise<boolean> {
