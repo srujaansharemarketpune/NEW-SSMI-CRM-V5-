@@ -74,14 +74,7 @@ export interface CrmUserSession {
   updatedAt?: string;
 }
 
-export const DEFAULT_MASTER_ADMIN_SESSION: CrmUserSession = {
-  email: PRIMARY_ADMIN_EMAIL,
-  name: 'Prasad Sir',
-  role: 'Master Admin',
-  isAuthenticated: true,
-  provider: 'google.com',
-  uid: 'srujaan_master_admin_root'
-};
+
 
 export interface PersistedAdminSession {
   uid: string;
