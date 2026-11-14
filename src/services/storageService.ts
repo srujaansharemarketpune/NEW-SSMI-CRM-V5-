@@ -23,7 +23,6 @@ import {
   deduplicateRecords,
   mergeStudentsSafely,
   mergeRecordsByKeySafely,
-  mergeRemoteDeletedRegistry,
   getColRef,
   getDocRef,
   getLegacyColRef,
