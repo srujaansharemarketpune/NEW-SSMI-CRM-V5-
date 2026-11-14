@@ -787,47 +787,15 @@ export async function syncRecord(
   collName: string,
   docId: string,
   data: Record<string, any>,
-  isMerge = true
+  _isMerge = true
 ): Promise<void> {
   if (!docId) throw new Error('Document ID is required for syncRecord.');
-  const ref = getInstituteDocRef(collName, docId);
-  const legacyRef = getLegacyDocRef(collName, docId);
-  const topLevelRef = doc(db, collName, String(docId));
-  const nowIso = new Date().toISOString();
-
-  const payload = sanitizeForFirestore({
-    ...data,
-    isDeleted: Boolean(data.isDeleted),
-    syncStatus: 'synced',
-    updatedAt: data.updatedAt || nowIso,
-    serverUpdatedAt: serverTimestamp(),
-    workspaceId: SHARED_INSTITUTE_ROOT_ID
-  });
-
-  if (!isMerge) {
-    (payload as any).createdAt = serverTimestamp();
-  }
-
-  const writePromise = Promise.all([
-    setDoc(ref, payload, { merge: isMerge }),
-    setDoc(legacyRef, payload, { merge: isMerge }),
-    setDoc(topLevelRef, payload, { merge: isMerge })
-  ]);
-
-  writePromise
-    .then(() => {
-      recordCloudWriteSuccess();
-    })
-    .catch((err) => {
-      console.warn('[Sync Record Notice]: Queued in local cache for background sync:', err);
-    });
-
-  // Resolve after 3000ms if server ack is slow (persistentLocalCache has already committed locally)
-  await Promise.race([
-    writePromise,
-    new Promise<void>((resolve) => setTimeout(resolve, 3000))
-  ]);
-  recordCloudWriteSuccess();
+  const known = ['students', 'leads', 'batches', 'staff', 'courses'].includes(collName);
+  if (!known) throw new Error('Only canonical CRM workspace records can be synchronized.');
+  const keyField = collName === 'batches' ? 'code' : 'id';
+  const payload = { ...data, [keyField]: data[keyField] || docId, id: data.id || docId, updatedAt: data.updatedAt || new Date().toISOString() };
+  const saved = await upsertCanonicalWorkspaceRecord(collName as keyof DeletedRecordsRegistry, payload, keyField);
+  if (!saved) throw new Error('Canonical Firestore workspace write failed.');
 }
 
 /**
@@ -4013,65 +3981,21 @@ export async function syncCollectionRecords<T extends Record<string, any>>(
     : Array.isArray(thirdArg)
     ? thirdArg
     : [];
-  const keyField: string =
-    typeof secondArg === 'string'
-      ? secondArg
-      : typeof thirdArg === 'string'
-      ? thirdArg
-      : 'id';
-
-  if (!(await ensureAuthorizedSession()) || !auth.currentUser || !Array.isArray(records)) {
-    return 0;
-  }
-
-  const knownTombstoneCol =
-    collectionName === 'students' ||
-    collectionName === 'leads' ||
-    collectionName === 'batches' ||
-    collectionName === 'staff' ||
-    collectionName === 'courses'
-      ? (collectionName as keyof DeletedRecordsRegistry)
-      : null;
-
-  const active = knownTombstoneCol
-    ? filterActiveRecords(records, knownTombstoneCol, keyField)
-    : records.filter((r) => r && !(r as any).isDeleted);
-
-  if (active.length === 0) return 0;
-
-  try {
-    setSyncEngineWorking(true);
-    const batch = writeBatch(db);
-    const nowIso = new Date().toISOString();
-    let writtenCount = 0;
-
-    active.slice(0, 200).forEach((rec) => {
-      const rawKey = String(rec[keyField] || rec.id || '').trim();
-      if (!rawKey) return;
-      const safeId = toSafeDocId(rawKey);
-      const cleanPayload = sanitizeForFirestore({
-        ...rec,
-        updatedAt: rec.updatedAt || nowIso,
-        localUpdatedAt: rec.localUpdatedAt || rec.updatedAt || nowIso,
-        workspaceId: SHARED_INSTITUTE_ROOT_ID
-      });
-      batch.set(getSsmiDocRef(collectionName, safeId), cleanPayload, { merge: true });
-      batch.set(getDocRef(collectionName, safeId), cleanPayload, { merge: true });
-      writtenCount++;
-    });
-
-    if (writtenCount > 0) {
-      await batch.commit();
-      recordCloudWriteSuccess(true);
-    } else {
-      setSyncEngineWorking(false);
-    }
-    return writtenCount;
-  } catch (err) {
-    console.warn(`[Firestore Sync] Batch write notice (${collectionName}):`, err);
-    setSyncEngineWorking(false);
-    return 0;
-  }
+  const keyField: string = typeof secondArg === 'string'
+    ? secondArg
+    : typeof thirdArg === 'string'
+    ? thirdArg
+    : collectionName === 'batches' ? 'code' : 'id';
+  if (!['students', 'leads', 'batches', 'staff', 'courses'].includes(collectionName)) return 0;
+  const active = filterActiveRecords(
+    records,
+    collectionName as keyof DeletedRecordsRegistry,
+    keyField
+  );
+  const results = await Promise.all(active.map((record) =>
+    upsertCanonicalWorkspaceRecord(collectionName as keyof DeletedRecordsRegistry, record, keyField)
+  ));
+  return results.filter(Boolean).length;
 }
 
 export function subscribeToCanonicalCollection<T extends Record<string, any>>(
