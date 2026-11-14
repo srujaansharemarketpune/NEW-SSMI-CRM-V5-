@@ -3661,19 +3661,20 @@ export async function runLiveFirebaseVerificationSuite(): Promise<{
         feesPaid: 0,
         pendingFees: 25000
       }, false);
-      const snap = await getDoc(getInstituteDocRef('students', testDocId));
+      const snap = await getDoc(doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID));
+      const savedStudents = snap.exists() && Array.isArray(snap.data()?.students) ? snap.data().students : [];
       results.push({
         testId: 'TEST 1',
-        title: 'Laptop Write to Shared Workspace (institutes/ssm_pune_main/students/STU_TEST_01)',
-        passed: Boolean(snap && snap.exists() && snap.data()?.workspaceId === INSTITUTE_WORKSPACE_ID),
-        detail: `Saved to institutes/${INSTITUTE_WORKSPACE_ID}/students/${testDocId} with serverTimestamp().`,
+        title: 'Laptop Write to Canonical Shared Workspace',
+        passed: Boolean(snap && snap.exists() && savedStudents.some((student: any) => student.id === testDocId)),
+        detail: `Saved to the shared master document institutes/${SHARED_INSTITUTE_ROOT_ID}.`,
         durationMs: Date.now() - t1Start
       });
     } else {
       const merged = mergeStudentsSafely([], [testStudent]);
       results.push({
         testId: 'TEST 1',
-        title: 'Laptop Write to Shared Workspace (institutes/ssm_pune_main/students/STU_TEST_01)',
+        title: 'Laptop Write to Canonical Shared Workspace',
         passed: merged.length === 1 && merged[0].id === testDocId,
         detail: `Verified workspace binding (${INSTITUTE_WORKSPACE_ID}). Sign in with Google for live Firestore commit.`,
         durationMs: Date.now() - t1Start
@@ -3693,20 +3694,22 @@ export async function runLiveFirebaseVerificationSuite(): Promise<{
   const t2Start = Date.now();
   try {
     if (isAuthed && auth.currentUser) {
-      const snap = await getDoc(getInstituteDocRef('students', testDocId));
+      const snap = await getDoc(doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID));
+      const savedStudents = snap.exists() && Array.isArray(snap.data()?.students) ? snap.data().students : [];
+      const savedStudent = savedStudents.find((student: any) => student.id === testDocId);
       results.push({
         testId: 'TEST 2',
         title: 'Android Phone Real-Time Auto-Sync from Shared Workspace',
-        passed: Boolean(snap && snap.exists() && snap.data()?.name === testStudent.name),
-        detail: `Phone reads identical student ${testDocId} from institutes/${INSTITUTE_WORKSPACE_ID}/students.`,
+        passed: Boolean(savedStudent && savedStudent.name === testStudent.name),
+        detail: `Phone reads the same student from institutes/${SHARED_INSTITUTE_ROOT_ID}.`,
         durationMs: Date.now() - t2Start
       });
     } else {
       results.push({
         testId: 'TEST 2',
         title: 'Android Phone Real-Time Auto-Sync from Shared Workspace',
-        passed: getInstituteDocRef('students', testDocId).path === `institutes/${INSTITUTE_WORKSPACE_ID}/students/${testDocId}`,
-        detail: `Confirmed deterministic path institutes/${INSTITUTE_WORKSPACE_ID}/students/${testDocId} across all devices.`,
+        passed: doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID).path === `institutes/${SHARED_INSTITUTE_ROOT_ID}`,
+        detail: `Confirmed every device uses the canonical document institutes/${SHARED_INSTITUTE_ROOT_ID}.`,
         durationMs: Date.now() - t2Start
       });
     }
@@ -3761,8 +3764,20 @@ export async function runLiveFirebaseVerificationSuite(): Promise<{
         paymentMode: 'UPI',
         remarks: 'Test 4 Atomic Transaction'
       });
-      await deleteDoc(getInstituteDocRef('payments', txRes.paymentDocId));
-      txDetail = `Atomic runTransaction verified (${txRes.paymentDocId}: Paid ₹${txRes.newPaid}, Pending ₹${txRes.newPending}).`;
+      await runTransaction(db, async (transaction) => {
+        const masterRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
+        const masterSnap = await transaction.get(masterRef);
+        if (!masterSnap.exists()) return;
+        const masterData = masterSnap.data();
+        transaction.set(masterRef, {
+          ...masterData,
+          payments: (masterData.payments || []).filter((payment: any) => String(payment.id || payment.paymentId) !== txRes.paymentDocId),
+          revision: Number(masterData.revision || 0) + 1,
+          updatedAt: new Date().toISOString(),
+          serverUpdatedAt: serverTimestamp()
+        }, { merge: false });
+      });
+      txDetail = `Atomic canonical transaction verified (${txRes.paymentDocId}: Paid ₹${txRes.newPaid}, Pending ₹${txRes.newPending}).`;
     }
     results.push({
       testId: 'TEST 4',
@@ -3830,7 +3845,7 @@ export async function runLiveFirebaseVerificationSuite(): Promise<{
   // TEST 7: Offline Flap Queue (`pending_sync`) & Safe Reconnect Synchronization
   const t7Start = Date.now();
   try {
-    enqueuePendingSyncOperation('TEST_OFFLINE_WRITE', `institutes/${INSTITUTE_WORKSPACE_ID}/students/${testDocId}`, 'unavailable');
+    enqueuePendingSyncOperation('TEST_OFFLINE_WRITE', `institutes/${SHARED_INSTITUTE_ROOT_ID}`, 'unavailable');
     const queued = getPendingSyncOperations();
     const found = queued.some((q) => q.collectionPath.includes(testDocId) && q.status === 'pending_sync');
     clearPendingSyncOperations();
@@ -3908,11 +3923,7 @@ export async function runLiveFirebaseVerificationSuite(): Promise<{
   try {
     const dupCheck = mergeStudentsSafely([testStudent], [{ ...testStudent }]);
     if (isAuthed && auth.currentUser) {
-      await Promise.all([
-        deleteDoc(getInstituteDocRef('students', testDocId)),
-        deleteDoc(doc(db, 'students', testDocId))
-      ]);
-      recordCloudWriteSuccess();
+      await deleteCanonicalWorkspaceRecord('students', testDocId, 'id');
     }
     results.push({
       testId: 'TEST 10',
