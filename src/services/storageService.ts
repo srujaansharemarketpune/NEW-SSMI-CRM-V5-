@@ -15,6 +15,7 @@ import {
   getDeletedIds,
   markDeletedId,
   unmarkDeletedId,
+  mergeRemoteDeletedRegistry,
   recordCloudReadSuccess,
   recordRemoteSnapshotPulse,
   recordCloudWriteSuccess,
@@ -740,131 +741,32 @@ export function subscribeToFirestoreStudents(
   onUpdate: (students: Student[]) => void,
   onError?: (err: any) => void
 ): () => void {
-  let unsubShared: (() => void) | null = null;
-  let unsubLegacy: (() => void) | null = null;
-  let unsubTop: (() => void) | null = null;
-  let isCancelled = false;
-
-  let sharedDocs: Student[] = [];
-  let legacyDocs: Student[] = [];
-  let topDocs: Student[] = [];
-
-  const parseSnapToStudents = (snapshot: any): Student[] => {
-    const list: Student[] = [];
-    snapshot.forEach((docSnap: any) => {
-      const data = docSnap.data();
-      const id = String(data?.id || docSnap.id || '').trim();
-      if (!data || !id) return;
-      if (data.isDeleted === true || data.deletedAt) {
-        markDeletedId('students', id);
-        return;
+  let cancelled = false;
+  let unsubscribe: (() => void) | null = null;
+  void ensureAuthorizedSession().then((authorized) => {
+    if (cancelled || !authorized || !auth.currentUser) return;
+    incrementActiveListenerCount(1);
+    unsubscribe = onSnapshot(
+      doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID),
+      (snapshot) => {
+        const data = snapshot.exists() ? snapshot.data() : {};
+        if (data.deletedRecords) mergeRemoteDeletedRegistry(data.deletedRecords);
+        const deleted = getDeletedIds('students');
+        const students = (Array.isArray(data.students) ? data.students : [])
+          .filter((student: any) => student && !student.isDeleted && !deleted.has(String(student.id || '')));
+        recordRemoteSnapshotPulse();
+        onUpdate(students as Student[]);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'institutes/' + SHARED_INSTITUTE_ROOT_ID);
+        onError?.(error);
       }
-      const tombstones = getDeletedIds('students');
-      if (tombstones.has(id)) return;
-      const rec: Student = {
-        id,
-        regId: data.regId || id,
-        name: data.name || 'Unnamed Student',
-        phone: data.phone || '',
-        whatsapp: data.whatsapp || data.phone || '',
-        email: data.email || '',
-        address: data.address || '',
-        course: data.course || 'Complete Master Trader Blueprint',
-        batch: data.batch || '',
-        enrollDate: data.enrollDate || new Date().toISOString().split('T')[0],
-        joinDate: data.joinDate || data.enrollDate || new Date().toISOString().split('T')[0],
-        status: data.status || 'Active',
-        source: data.source || 'Direct',
-        grossFee: Number(data.grossFee) || Number(data.netFee) || 25000,
-        discount: Number(data.discount) || 0,
-        netFee: Number(data.netFee) || 25000,
-        docs: data.docs || '',
-        notes: data.notes || '',
-        milestones: Array.isArray(data.milestones) ? data.milestones : []
-      };
-      if (data.updatedAt) (rec as any).updatedAt = data.updatedAt;
-      if (data.serverUpdatedAt) (rec as any).serverUpdatedAt = data.serverUpdatedAt;
-      (rec as any).syncStatus = 'synced';
-      list.push(rec);
-    });
-    return list;
-  };
-
-  const emitMerged = () => {
-    recordRemoteSnapshotPulse();
-    const merged = mergeStudentsSafely(topDocs, mergeStudentsSafely(legacyDocs, sharedDocs));
-    onUpdate(merged);
-  };
-
-  ensureAuthorizedSession().then((authorized) => {
-    if (isCancelled || !authorized || !auth.currentUser) return;
-
-    try {
-      const sharedCol = getColRef('students');
-      const legacyCol = getLegacyColRef('students');
-      const topCol = collection(db, 'students');
-      incrementActiveListenerCount(3);
-
-      unsubShared = onSnapshot(
-        sharedCol,
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          if (snapshot.metadata.hasPendingWrites) return;
-          sharedDocs = parseSnapToStudents(snapshot);
-          emitMerged();
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/students`);
-          if (onError) onError(error);
-        }
-      );
-
-      unsubLegacy = onSnapshot(
-        legacyCol,
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          if (snapshot.metadata.hasPendingWrites) return;
-          legacyDocs = parseSnapToStudents(snapshot);
-          emitMerged();
-        },
-        () => {}
-      );
-
-      unsubTop = onSnapshot(
-        topCol,
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          if (snapshot.metadata.hasPendingWrites) return;
-          topDocs = parseSnapToStudents(snapshot);
-          emitMerged();
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'students');
-          if (onError) onError(error);
-        }
-      );
-    } catch (err) {
-      console.warn('Could not establish Firestore students snapshot subscription:', err);
-    }
-  });
-
+    );
+  }).catch((error) => onError?.(error));
   return () => {
-    isCancelled = true;
-    if (unsubShared) {
-      incrementActiveListenerCount(-1);
-      unsubShared();
-      unsubShared = null;
-    }
-    if (unsubLegacy) {
-      incrementActiveListenerCount(-1);
-      unsubLegacy();
-      unsubLegacy = null;
-    }
-    if (unsubTop) {
-      incrementActiveListenerCount(-1);
-      unsubTop();
-      unsubTop = null;
-    }
+    cancelled = true;
+    unsubscribe?.();
+    if (unsubscribe) incrementActiveListenerCount(-1);
   };
 }
 
@@ -876,134 +778,32 @@ export function subscribeToFirestoreLeads(
   onUpdate: (leads: Lead[]) => void,
   onError?: (err: any) => void
 ): () => void {
-  let unsubShared: (() => void) | null = null;
-  let unsubLegacy: (() => void) | null = null;
-  let unsubTop: (() => void) | null = null;
-  let isCancelled = false;
-
-  let sharedDocs: Lead[] = [];
-  let legacyDocs: Lead[] = [];
-  let topDocs: Lead[] = [];
-
-  const parseSnapToLeads = (snapshot: any): Lead[] => {
-    const list: Lead[] = [];
-    snapshot.forEach((docSnap: any) => {
-      const data = docSnap.data();
-      const id = String(data?.id || docSnap.id || '').trim();
-      if (!data || !id) return;
-      if (data.isDeleted === true || data.deletedAt) {
-        markDeletedId('leads', id);
-        return;
+  let cancelled = false;
+  let unsubscribe: (() => void) | null = null;
+  void ensureAuthorizedSession().then((authorized) => {
+    if (cancelled || !authorized || !auth.currentUser) return;
+    incrementActiveListenerCount(1);
+    unsubscribe = onSnapshot(
+      doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID),
+      (snapshot) => {
+        const data = snapshot.exists() ? snapshot.data() : {};
+        if (data.deletedRecords) mergeRemoteDeletedRegistry(data.deletedRecords);
+        const deleted = getDeletedIds('leads');
+        const leads = (Array.isArray(data.leads) ? data.leads : [])
+          .filter((lead: any) => lead && !lead.isDeleted && !deleted.has(String(lead.id || '')));
+        recordRemoteSnapshotPulse();
+        onUpdate(leads as Lead[]);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'institutes/' + SHARED_INSTITUTE_ROOT_ID);
+        onError?.(error);
       }
-      const tombstones = getDeletedIds('leads');
-      if (tombstones.has(id)) return;
-      const rec: Lead = {
-        id,
-        name: data.name || 'Unnamed Prospect',
-        phone: data.phone || '',
-        email: data.email || '',
-        locality: data.locality || '',
-        course: data.course || 'Complete Master Trader Blueprint',
-        source: data.source || 'Direct',
-        stage: data.stage || 'New Enquiry',
-        intent: data.intent || 'Hot',
-        enquiryDate: data.enquiryDate || new Date().toISOString().split('T')[0],
-        followUpDate: data.followUpDate || '',
-        followUpTime: data.followUpTime || '11:00 AM',
-        lastContact: data.lastContact || new Date().toISOString().split('T')[0],
-        mode: data.mode || 'Offline Classroom',
-        staff: data.staff || 'Prasad Sir',
-        objection: data.objection || 'None',
-        notes: data.notes || ''
-      };
-      if (data.updatedAt) (rec as any).updatedAt = data.updatedAt;
-      if (data.serverUpdatedAt) (rec as any).serverUpdatedAt = data.serverUpdatedAt;
-      (rec as any).syncStatus = 'synced';
-      list.push(rec);
-    });
-    return list;
-  };
-
-  const emitMerged = () => {
-    recordRemoteSnapshotPulse();
-    const merged = mergeRecordsByKeySafely(
-      topDocs,
-      mergeRecordsByKeySafely(legacyDocs, sharedDocs, 'id', 'leads'),
-      'id',
-      'leads'
     );
-    onUpdate(merged);
-  };
-
-  ensureAuthorizedSession().then((authorized) => {
-    if (isCancelled || !authorized || !auth.currentUser) return;
-
-    try {
-      const sharedCol = getColRef('leads');
-      const legacyCol = getLegacyColRef('leads');
-      const topCol = collection(db, 'leads');
-      incrementActiveListenerCount(3);
-
-      unsubShared = onSnapshot(
-        sharedCol,
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          if (snapshot.metadata.hasPendingWrites) return;
-          sharedDocs = parseSnapToLeads(snapshot);
-          emitMerged();
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/leads`);
-          if (onError) onError(error);
-        }
-      );
-
-      unsubLegacy = onSnapshot(
-        legacyCol,
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          if (snapshot.metadata.hasPendingWrites) return;
-          legacyDocs = parseSnapToLeads(snapshot);
-          emitMerged();
-        },
-        () => {}
-      );
-
-      unsubTop = onSnapshot(
-        topCol,
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          if (snapshot.metadata.hasPendingWrites) return;
-          topDocs = parseSnapToLeads(snapshot);
-          emitMerged();
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, 'leads');
-          if (onError) onError(error);
-        }
-      );
-    } catch (err) {
-      console.warn('Could not establish Firestore leads snapshot subscription:', err);
-    }
-  });
-
+  }).catch((error) => onError?.(error));
   return () => {
-    isCancelled = true;
-    if (unsubShared) {
-      incrementActiveListenerCount(-1);
-      unsubShared();
-      unsubShared = null;
-    }
-    if (unsubLegacy) {
-      incrementActiveListenerCount(-1);
-      unsubLegacy();
-      unsubLegacy = null;
-    }
-    if (unsubTop) {
-      incrementActiveListenerCount(-1);
-      unsubTop();
-      unsubTop = null;
-    }
+    cancelled = true;
+    unsubscribe?.();
+    if (unsubscribe) incrementActiveListenerCount(-1);
   };
 }
 
