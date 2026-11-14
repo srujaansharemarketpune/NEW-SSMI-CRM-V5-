@@ -288,7 +288,7 @@ export function saveCoursesToStorageImmediate(courses: Course[], fullState?: App
     console.warn('saveCoursesToStorageImmediate warning:', err);
   }
 
-  // Trigger 400ms debounced Firestore & Cloud Server sync to prevent network congestion
+  // Trigger 400ms debounced synchronization to the shared Firestore workspace
   if (courseCloudSyncTimer) {
     clearTimeout(courseCloudSyncTimer);
   }
@@ -1077,7 +1077,7 @@ if (typeof window !== 'undefined') {
  * Unified Non-Blocking Auto-Save Data Handler:
  * 1. Updates optimistic in-memory cache in 0ms (zero main-thread lockup).
  * 2. Batches localStorage & IndexedDB serialization off the keystroke path.
- * 3. Debounces Firebase Firestore & Cloud Server sync (600ms) silently in the background.
+ * 3. Debounces canonical Firebase Firestore sync (600ms) silently in the background.
  */
 export async function autoSaveData(
   updatedData: AppState,
@@ -1662,11 +1662,6 @@ export async function masterFetchFromCloud(
   };
 }
 
-/**
- * Sets up a safe Server-Sent Events (SSE) real-time listener on Firebase Realtime Database
- * (`${firebaseUrl}/srujaan_main_store.json`) if configured by the user.
- * Silently closes on error so zero console errors occur when not configured.
- */
 export async function checkStorageQuota(state: AppState): Promise<StorageQuotaInfo> {
   let usedKb = 120;
   let quotaMb = 2048; // default 2GB browser storage allowance
