@@ -27,8 +27,7 @@ import {
 export const PRIMARY_INSTITUTE_EMAIL = 'srujaansharemarketpune@gmail.com';
 export const SECONDARY_AUTHORIZED_EMAIL = 'udayhajare18@gmail.com';
 
-export const DEFAULT_MASTER_SHEET_URL =
-  'https://docs.google.com/spreadsheets/d/1SrujaanShareMarketMasterDatabasePune/edit';
+export const DEFAULT_MASTER_SHEET_URL = ''; // Set after the master spreadsheet is created in the authorized institute Google Drive.
 export const DEFAULT_GOOGLE_FORM_URL =
   'https://docs.google.com/forms/d/e/1FAIpQLSdXcgLIUKZ_T-ImDJ9btMk6hkox08dnR2m1DVf_4cntDqHGxg/viewform?usp=header';
 export const DEFAULT_GOOGLE_FORM_EMBED_URL =
@@ -623,11 +622,14 @@ export function getCloudIntegrationConfig(): CloudIntegrationConfig {
       const parsed = JSON.parse(raw);
       const savedFormUrl = String(parsed.googleFormUrl || '').trim();
       const isOldPlaceholderForm = savedFormUrl.includes('1FAIpQLScD8yH9K4m7P1J4Z-Srujaan-Admission-Form');
+      const savedSheetUrl = String(parsed.masterSheetUrl || '').trim();
+      const isOldPlaceholderSheet = savedSheetUrl.includes('1SrujaanShareMarketMasterDatabasePune');
       return {
         ...defaults,
         ...parsed,
         accountEmail: PRIMARY_INSTITUTE_EMAIL,
         execUrl: (parsed.execUrl || defaults.execUrl).trim(),
+        masterSheetUrl: isOldPlaceholderSheet ? defaults.masterSheetUrl : savedSheetUrl,
         googleFormUrl: isOldPlaceholderForm ? defaults.googleFormUrl : (savedFormUrl || defaults.googleFormUrl),
         googleFormEmbedUrl: isOldPlaceholderForm ? defaults.googleFormEmbedUrl : (parsed.googleFormEmbedUrl || defaults.googleFormEmbedUrl)
       };
