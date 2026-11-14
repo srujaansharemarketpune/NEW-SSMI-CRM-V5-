@@ -463,8 +463,15 @@ export default function App() {
 
     const attachLiveListener = () => {
       if (cancelled) return;
-      unsubscribe = subscribeToCloudUpdates('institute_master_data', (remoteData, hasPendingWrites) => {
-        if (hasPendingWrites || !remoteData || !isSharedWorkspaceHydratedRef.current) return;
+      unsubscribe = subscribeToCloudUpdates('institute_master_data', (remoteData, hasPendingWrites, fromCache) => {
+        if (hasPendingWrites || !remoteData) return;
+        if (!isSharedWorkspaceHydratedRef.current) {
+          const localIsSeed = Boolean((stateRef.current as any).isSeedData);
+          // A seed-only device may accept a server snapshot; a device with saved records
+          // must first complete a merge or an explicit push before remote data can replace it.
+          if (!localIsSeed || fromCache) return;
+          isSharedWorkspaceHydratedRef.current = true;
+        }
         const isSameDevice = remoteData.deviceId && remoteData.deviceId === getLocalDeviceId();
         if (isSameDevice && Date.now() - lastLocalMutationAtRef.current < 6000) return;
         if (Date.now() - lastLocalMutationAtRef.current < 2500) return;
@@ -535,11 +542,26 @@ export default function App() {
             interactiveAuth: false,
             onLoginHydrate: true
           });
-          if (pulled.updated && pulled.state) await applyWorkspaceState(pulled.state);
+          if (pulled.updated && pulled.state) {
+            if (String(pulled.source || '').includes('Firestore')) {
+              // Promote legacy Firestore-only data into the canonical document before listening.
+              const migrated = await dualWriteToCloud(pulled.state, {
+                interactiveAuth: false,
+                skipPreFetch: false
+              });
+              if (migrated.ok && migrated.state) {
+                await applyWorkspaceState(migrated.state);
+                isSharedWorkspaceHydratedRef.current = true;
+              }
+            } else {
+              await applyWorkspaceState(pulled.state);
+            }
+          } else if (String(pulled.source || '').includes('Firebase Firestore')) {
+            isSharedWorkspaceHydratedRef.current = true;
+          }
         }
 
         if (cancelled) return;
-        isSharedWorkspaceHydratedRef.current = true;
         attachLiveListener();
       } catch (error: any) {
         hasUnsyncedLocalChangesRef.current = true;
