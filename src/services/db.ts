@@ -716,25 +716,9 @@ export async function loadStateFromStorage(): Promise<AppState> {
     return localState;
   }
 
-  // 3. Try online server mirror before falling back to initial seed state
-  if (typeof navigator !== 'undefined' && navigator.onLine) {
-    try {
-      const resp = await fetch('/api/cloud/state');
-      const contentType = (resp.headers.get('content-type') || '').toLowerCase();
-      if (resp.ok && contentType.includes('application/json')) {
-        const data = await resp.json();
-        if (data?.state && Array.isArray(data.state.students)) {
-          const normalized = normalizeLoadedState(data.state);
-          await saveStateToStorage(normalized, { preserveTimestamp: true });
-          return normalized;
-        }
-      }
-    } catch {
-      // ignore if server has no snapshot yet
-    }
-  }
+  // A fresh device hydrates from the single canonical Firestore workspace after real sign-in.
+  // Local storage and IndexedDB are used only as offline caches, never as separate cloud databases.
 
-  // 4. Fallback to initial seed state with epoch timestamp so cloud state always wins on fresh browsers/laptops
   const initial = getInitialAppState();
   (initial as any).updatedAt = '1970-01-01T00:00:00.000Z';
   initial.lastSavedAt = '1970-01-01T00:00:00.000Z';
@@ -1239,8 +1223,8 @@ export async function fetchWithTimeout(
 }
 
 /**
- * Dual-Write Cloud Engine:
- * Simultaneously persists state to:
+ * Shared-State Sync Engine:
+ * Persists local offline cache and writes online data only to the canonical Firebase Firestore workspace.
  * 1. Local Storage & IndexedDB (`window.instituteDB` v3.0.0 & `srujaan_master_db`)
  * 2. Online Cloud Run Server (`/api/cloud/state`)
  * 3. Custom Firebase Realtime DB / REST Endpoint (`settings.cloudConfig.firebaseUrl` -> `srujaan_main_store.json`)
@@ -1409,7 +1393,7 @@ export async function dualWriteToCloud(
 
 /**
  * Master Fetch from Cloud:
- * Pulls the latest active state from Firestore `institutes/srujaan_share_market_pune` (and `institute_master_data`),
+ * Pulls the canonical Firebase Firestore workspace snapshot shared by all authorized devices. `institutes/srujaan_share_market_pune` (and `institute_master_data`),
  * Firestore sub-collections (`students` and `leads`), Custom Firebase RTDB URL, and Online Server,
  * performing Last-Write-Wins conflict resolution by `updatedAt` so newer cloud records overwrite stale local cache.
  */
