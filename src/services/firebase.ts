@@ -2045,7 +2045,8 @@ export async function upsertCanonicalWorkspaceRecord(
   try {
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(masterRef);
-      const remote = snap.exists() ? snap.data() : {};
+      if (!snap.exists()) throw new Error('Canonical master snapshot is not initialized. Perform a full workspace sync first.');
+      const remote = snap.data();
       const existing = Array.isArray(remote[collectionName]) ? remote[collectionName] : [];
       const incoming = { ...record, [keyField]: recordId, id: recordId, isDeleted: false, updatedAt: record.updatedAt || nowIso };
       const merged = collectionName === 'students'
@@ -2121,7 +2122,8 @@ export async function deleteCanonicalWorkspaceRecord(
   try {
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(masterRef);
-      const remote = snap.exists() ? snap.data() : {};
+      if (!snap.exists()) throw new Error('Canonical master snapshot is not initialized. Perform a full workspace sync first.');
+      const remote = snap.data();
       const localDeleted = readDeletedRegistry();
       const remoteDeleted = (remote.deletedRecords || {}) as Partial<DeletedRecordsRegistry>;
       const deletedRecords = {} as DeletedRecordsRegistry;
