@@ -3766,7 +3766,7 @@ export async function runLiveFirebaseVerificationSuite(): Promise<{
   try {
     enqueuePendingSyncOperation('TEST_OFFLINE_WRITE', `institutes/${SHARED_INSTITUTE_ROOT_ID}`, 'unavailable');
     const queued = getPendingSyncOperations();
-    const found = queued.some((q) => q.collectionPath.includes(testDocId) && q.status === 'pending_sync');
+    const found = queued.some((q) => q.collectionPath.includes(SHARED_INSTITUTE_ROOT_ID) && q.status === 'pending_sync');
     clearPendingSyncOperations();
     results.push({
       testId: 'TEST 7',
