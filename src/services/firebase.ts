@@ -3645,7 +3645,7 @@ export async function autoSaveToFirestoreMaster(
       );
     }
     recordCloudWriteSuccess();
-    console.log(`[Sync Engine] Cloud push success to institutes/${SHARED_INSTITUTE_ROOT_ID} & institutes/${userId}`);
+    console.log(`[Sync Engine] Canonical cloud push success to institutes/${SHARED_INSTITUTE_ROOT_ID}`);
     return true;
   } catch (err) {
     console.warn('Firestore autoSaveToFirestoreMaster notice:', err);
@@ -3656,7 +3656,7 @@ export async function autoSaveToFirestoreMaster(
 export const saveMasterSnapshotToFirestore = autoSaveToFirestoreMaster;
 
 /**
- * Direct Restore JSON Write to Unified Master Document (`doc(db, 'institutes', 'institute_master_data')`)
+ * Direct Restore JSON Write to the canonical shared workspace document.
  */
 export async function restoreJsonToFirestoreMaster(parsedData: Record<string, any>): Promise<boolean> {
   if (!(await ensureAuthorizedSession())) return false;
@@ -3704,7 +3704,7 @@ export async function restoreJsonToFirestoreMaster(parsedData: Record<string, an
 
 /**
  * Fetch Master Function (`fetchMasterSnapshotFromFirestore`):
- * Direct read from `doc(db, 'institutes', 'institute_master_data')`.
+ * Reads the canonical workspace first; legacy snapshot documents are consulted only for one-time migration.
  */
 export async function fetchMasterSnapshotFromFirestore(
   userId = 'institute_master_data'
