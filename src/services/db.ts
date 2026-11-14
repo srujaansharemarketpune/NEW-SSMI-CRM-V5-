@@ -1273,9 +1273,16 @@ export async function dualWriteToCloud(
         const remoteMaster = await fetchMasterSnapshotFromFirestore('institute_master_data');
         const canonicalSnapshot = Number((remoteMaster as any)?.syncSchemaVersion || 0) >= 2;
         // Never consult per-collection mirrors after the canonical full-state document exists.
-        const [remoteSubStudents, remoteSubLeads] = canonicalSnapshot
-          ? [[], []]
-          : await Promise.all([fetchStudentsFromFirestore(), fetchLeadsFromFirestore()]);
+        const [remoteSubStudents, remoteSubLeads, remoteSubBatches, remoteSubStaff, remoteSubCourses, remoteSettings] = canonicalSnapshot
+          ? [[], [], [], [], [], null]
+          : await Promise.all([
+              fetchStudentsFromFirestore(),
+              fetchLeadsFromFirestore(),
+              fetchBatchesFromFirestore(),
+              fetchStaffFromFirestore(),
+              fetchCoursesFromFirestore(),
+              fetchSettingsFromFirestore()
+            ]);
         const cloudMasterStudents = Array.isArray(remoteMaster?.students) ? remoteMaster!.students : [];
         const allRemoteStudents = canonicalSnapshot
           ? cloudMasterStudents
@@ -1289,15 +1296,12 @@ export async function dualWriteToCloud(
           : mergeRecordsByKeySafely(cloudMasterLeads, remoteSubLeads as any[], 'id', 'leads');
         const mergedLeads = mergeRecordsByKeySafely(state.leads || [], allRemoteLeads, 'id', 'leads');
 
-        const mergedBatches = Array.isArray(remoteMaster?.batches)
-          ? mergeRecordsByKeySafely(state.batches || [], remoteMaster!.batches, 'code', 'batches')
-          : state.batches;
-        const mergedCourses = Array.isArray(remoteMaster?.courses)
-          ? mergeRecordsByKeySafely(state.courses || [], remoteMaster!.courses, 'id', 'courses')
-          : state.courses;
-        const mergedStaff = Array.isArray(remoteMaster?.staff)
-          ? mergeRecordsByKeySafely(state.staff || [], remoteMaster!.staff, 'id', 'staff')
-          : state.staff;
+        const remoteBatches = Array.isArray(remoteMaster?.batches) ? remoteMaster!.batches : remoteSubBatches as any[];
+        const remoteCourses = Array.isArray(remoteMaster?.courses) ? remoteMaster!.courses : remoteSubCourses as any[];
+        const remoteStaff = Array.isArray(remoteMaster?.staff) ? remoteMaster!.staff : remoteSubStaff as any[];
+        const mergedBatches = mergeRecordsByKeySafely(state.batches || [], remoteBatches, 'code', 'batches');
+        const mergedCourses = mergeRecordsByKeySafely(state.courses || [], remoteCourses, 'id', 'courses');
+        const mergedStaff = mergeRecordsByKeySafely(state.staff || [], remoteStaff, 'id', 'staff');
         const mergedAttendance = remoteMaster?.attendance
           ? mergeAttendanceSafely(state.attendance || {}, remoteMaster.attendance)
           : state.attendance;
@@ -1309,7 +1313,12 @@ export async function dualWriteToCloud(
           batches: mergedBatches,
           courses: mergedCourses,
           staff: mergedStaff,
-          attendance: mergedAttendance
+          attendance: mergedAttendance,
+          settings: {
+            ...(state.settings || {}),
+            ...(remoteSettings || {}),
+            ...(remoteMaster?.settings || {})
+          }
         };
       } catch (preMergeErr) {
         console.warn('Pre-push cloud merge check warning:', preMergeErr);
