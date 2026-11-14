@@ -1610,11 +1610,13 @@ export async function masterFetchFromCloud(
   // Firestore is the only authoritative database. Never hydrate from a per-deployment server mirror.
 
   mergedState = normalizeLoadedState(mergedState);
-  mergedState.lastCloudSyncAt = new Date().toLocaleString('en-IN', { hour12: false });
-  mergedState.syncQueue = (mergedState.syncQueue || []).map(q => ({
-    ...q,
-    status: 'Synced with Cloud'
-  }));
+  if (sourcesUsed.includes('Firebase Firestore')) {
+    mergedState.lastCloudSyncAt = new Date().toLocaleString('en-IN', { hour12: false });
+    mergedState.syncQueue = (mergedState.syncQueue || []).map(q => ({
+      ...q,
+      status: 'Synced with Shared Firebase'
+    }));
+  }
 
   // Calculate exact count of new and updated records across students and leads
   const stripMeta = (obj: any) => {
