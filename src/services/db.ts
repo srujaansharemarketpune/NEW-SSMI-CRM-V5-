@@ -1224,15 +1224,11 @@ export async function fetchWithTimeout(
 
 /**
  * Shared-State Sync Engine:
- * Persists local offline cache and writes online data only to the canonical Firebase Firestore workspace.
- * 1. Local Storage & IndexedDB (`window.instituteDB` v3.0.0 & `srujaan_master_db`)
- * 2. Online Cloud Run Server (`/api/cloud/state`)
- * 3. Custom Firebase Realtime DB / REST Endpoint (`settings.cloudConfig.firebaseUrl` -> `srujaan_main_store.json`)
- * 4. Firebase Cloud Firestore (`ai-studio-srujaansharemark-...`)
+ * Local storage and IndexedDB are offline caches only. The sole cross-device database is
+ * Firebase Firestore document: institutes/srujaan_share_market_pune.
  *
- * When `options.isOverwrite` is false (default Push Update), performs a non-destructive merge
- * with remote data before pushing so other devices' additions are never lost.
- * When `options.isOverwrite` is true (Overwrite Cloud), force-pushes current local state directly.
+ * Normal updates transactionally merge with the canonical cloud snapshot.
+ * Explicit Overwrite Cloud replaces that snapshot after the user's confirmation.
  */
 let activeDualWritePromise: Promise<{
   ok: boolean;
