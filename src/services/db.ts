@@ -1138,7 +1138,7 @@ export async function autoSaveData(
       return;
     }
     try {
-      await dualWriteToCloud(target, { interactiveAuth: false, skipPreFetch: true });
+      await dualWriteToCloud(target, { interactiveAuth: false, skipPreFetch: false });
     } catch (err) {
       console.warn('Coalesced auto-save cloud sync warning:', err);
     }
@@ -1295,13 +1295,18 @@ export async function dualWriteToCloud(
           fetchStudentsFromFirestore(),
           fetchLeadsFromFirestore()
         ]);
+        const canonicalSnapshot = Number((remoteMaster as any)?.syncSchemaVersion || 0) >= 2;
         const cloudMasterStudents = Array.isArray(remoteMaster?.students) ? remoteMaster!.students : [];
-        const allRemoteStudents = mergeStudentsSafely(cloudMasterStudents, remoteSubStudents as any[]);
-        // Pass local first, remote second so newer cloud records win by updatedAt
+        const allRemoteStudents = canonicalSnapshot
+          ? cloudMasterStudents
+          : mergeStudentsSafely(cloudMasterStudents, remoteSubStudents as any[]);
+        // Use canonical cloud state as the source of truth; record timestamps resolve genuine concurrent edits.
         const mergedStudents = mergeStudentsSafely(state.students || [], allRemoteStudents);
 
         const cloudMasterLeads = Array.isArray(remoteMaster?.leads) ? remoteMaster!.leads : [];
-        const allRemoteLeads = mergeRecordsByKeySafely(cloudMasterLeads, remoteSubLeads as any[], 'id', 'leads');
+        const allRemoteLeads = canonicalSnapshot
+          ? cloudMasterLeads
+          : mergeRecordsByKeySafely(cloudMasterLeads, remoteSubLeads as any[], 'id', 'leads');
         const mergedLeads = mergeRecordsByKeySafely(state.leads || [], allRemoteLeads, 'id', 'leads');
 
         const mergedBatches = Array.isArray(remoteMaster?.batches)
@@ -1431,7 +1436,7 @@ export async function dualWriteToCloud(
           if (options?.interactiveAuth && !auth.currentUser) {
             await signInWithGoogle();
           }
-          const synced = await syncFullStateToFirestore(stateToPush);
+          const synced = await syncFullStateToFirestore(stateToPush, isOverwrite);
           if (synced) {
             channels.push('Firebase Firestore');
           }
