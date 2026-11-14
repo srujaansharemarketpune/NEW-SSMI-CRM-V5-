@@ -161,6 +161,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(() => initialAuthRef.current?.user ?? null);
   const [userRole, setUserRole] = useState<'admin' | 'operator' | null>(() => initialAuthRef.current?.role ?? null);
   const [authInitializing, setAuthInitializing] = useState<boolean>(false);
+  const [isLocalStateReady, setIsLocalStateReady] = useState(false);
+  const isSharedWorkspaceHydratedRef = useRef(false);
   const [redirectAuthError, setRedirectAuthError] = useState<FormattedFirebaseAuthError | null>(null);
   const authEmailRef = useRef<string | null>(
     initialAuthRef.current?.user?.email?.toLowerCase().trim() || null
@@ -220,48 +222,6 @@ export default function App() {
         // ignore unsubscribe error
       }
     };
-  }, []);
-
-  // Automatic Pending Local Data Sync & Cloud Hydration on Live Firebase Auth Connection
-  useEffect(() => {
-    const onFirebaseAuthConnected = async () => {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-      try {
-        await testConnection();
-        await flushPendingSyncOutbox();
-
-        const hasPendingOutbox = getPendingSyncOperations().length > 0;
-        if (hasUnsyncedLocalChangesRef.current || hasPendingOutbox) {
-          const pushRes = await dualWriteToCloud(stateRef.current, {
-            interactiveAuth: false,
-            skipPreFetch: true
-          });
-          if (pushRes.ok) {
-            hasUnsyncedLocalChangesRef.current = false;
-            setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
-          }
-        }
-
-        const pullRes = await masterFetchFromCloud(stateRef.current, {
-          interactiveAuth: false,
-          onLoginHydrate: true
-        });
-        if (pullRes.updated && pullRes.state) {
-          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-          setLastCloudSyncAt(nowStr);
-          setState(pullRes.state);
-          stateRef.current = pullRes.state;
-          saveCachedStudents(pullRes.state.students);
-          syncWindowInstituteDB(pullRes.state);
-          await saveStateToStorage(pullRes.state, { preserveTimestamp: true });
-        }
-      } catch (err) {
-        console.warn('Post-auth auto sync notice:', err);
-      }
-    };
-
-    window.addEventListener('ssm-firebase-auth-connected', onFirebaseAuthConnected);
-    return () => window.removeEventListener('ssm-firebase-auth-connected', onFirebaseAuthConnected);
   }, []);
 
   const isMasterAdmin = userRole === 'admin';
@@ -477,28 +437,35 @@ export default function App() {
       }
     });
 
-  // Real-Time Firestore Synchronization Listener (synchronizes changes across multiple tabs and devices)
+  // Shared-workspace reconciliation: merge this device's saved records before listening,
+  // so the first cloud snapshot cannot erase device-specific records during migration.
   useEffect(() => {
+    if (!currentUser?.uid || !isLocalStateReady) return;
+    let cancelled = false;
+    let unsubscribe = () => {};
 
-    const unsubscribe = subscribeToCloudUpdates('institute_master_data', (remoteData, hasPendingWrites) => {
-      if (hasPendingWrites || !remoteData) return;
-      // Ignore self-originated echoes while local debounce is still settling
-      const isSameDevice = remoteData.deviceId && remoteData.deviceId === getLocalDeviceId();
-      if (isSameDevice && Date.now() - lastLocalMutationAtRef.current < 6000) {
-        return;
-      }
-      // If user on this device mutated within the last 2.5 seconds, avoid mid-keystroke flicker
-      if (Date.now() - lastLocalMutationAtRef.current < 2500) {
-        return;
-      }
+    const applyWorkspaceState = async (nextState: AppState) => {
+      const normalized = normalizeLoadedState(nextState);
+      setState(normalized);
+      stateRef.current = normalized;
+      saveCachedStudents(normalized.students || []);
+      syncWindowInstituteDB(normalized);
+      await saveStateToStorage(normalized, { preserveTimestamp: true });
+      setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
+    };
 
-      try {
-        const remotePayload = remoteData.payload ? remoteData.payload : remoteData;
-        if (remotePayload && (Array.isArray(remotePayload.students) || remotePayload.settings)) {
+    const attachLiveListener = () => {
+      if (cancelled) return;
+      unsubscribe = subscribeToCloudUpdates('institute_master_data', (remoteData, hasPendingWrites) => {
+        if (hasPendingWrites || !remoteData || !isSharedWorkspaceHydratedRef.current) return;
+        const isSameDevice = remoteData.deviceId && remoteData.deviceId === getLocalDeviceId();
+        if (isSameDevice && Date.now() - lastLocalMutationAtRef.current < 6000) return;
+        if (Date.now() - lastLocalMutationAtRef.current < 2500) return;
+
+        try {
+          const remotePayload = remoteData.payload ? remoteData.payload : remoteData;
+          if (!remotePayload || (!Array.isArray(remotePayload.students) && !remotePayload.settings)) return;
           const currentLocal = stateRef.current;
-
-          // The canonical master document is a complete snapshot. Treat it as authoritative;
-          // union-merging stale browser arrays here caused deleted/old records to reappear.
           const normalized = normalizeLoadedState({
             ...currentLocal,
             ...remotePayload,
@@ -518,122 +485,75 @@ export default function App() {
               ? mergeRecordsByKeySafely([], remotePayload.staff, 'id', 'staff')
               : currentLocal.staff,
             attendance: remotePayload.attendance || {},
-            settings: {
-              ...currentLocal.settings,
-              ...(remotePayload.settings || {})
-            }
+            settings: { ...currentLocal.settings, ...(remotePayload.settings || {}) }
           });
-          (normalized as any).updatedAt =
-            remoteData.updatedAt || remotePayload.updatedAt || new Date().toISOString();
+          (normalized as any).updatedAt = remoteData.updatedAt || remotePayload.updatedAt || new Date().toISOString();
           (normalized as any).isSeedData = false;
-
-          const currentFp = computeSyncFingerprint(currentLocal);
-          const remoteFp = computeSyncFingerprint(normalized);
-
-          if (currentFp !== remoteFp) {
-            const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-            setLastCloudSyncAt(nowStr);
-            setState(normalized);
-            stateRef.current = normalized;
-            saveCachedStudents(normalized.students);
-            syncWindowInstituteDB(normalized);
-            saveStateToStorage(normalized, { preserveTimestamp: true });
-            console.log(`[Sync Engine] Cloud fetch applied: ${normalized.students.length} students, ${normalized.leads.length} leads`);
+          if (computeSyncFingerprint(currentLocal) !== computeSyncFingerprint(normalized)) {
+            void applyWorkspaceState(normalized);
           }
+        } catch (error) {
+          console.warn('Canonical workspace live update notice:', error);
         }
-      } catch (err) {
-        console.warn('Real-time sync reconciliation warning:', err);
-      }
-    });
+      });
+    };
 
-    // Student and lead views are hydrated from the same canonical master snapshot above.
-    // Separate collection listeners previously merged stale mirrors back into the UI.
-    
-    // Automatic Login Hydration: immediately trigger fetchMasterSnapshotFromFirestore() & reconcile
-    (async () => {
+    const reconcileBeforeListening = async () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        hasUnsyncedLocalChangesRef.current = true;
+        return;
+      }
+
+      const localState = stateRef.current;
+      const localIsSeed = Boolean((localState as any).isSeedData);
+
       try {
-        const cloudSnap = await fetchMasterSnapshotFromFirestore('institute_master_data');
-        const currentLocal = stateRef.current;
-        const localIsSeed = Boolean((currentLocal as any).isSeedData);
-        const localTimeMs = localIsSeed
-          ? 0
-          : Date.parse(String((currentLocal as any).updatedAt || currentLocal.settings?.lastUpdated || '')) || 0;
-        const cloudTimeMs = cloudSnap?.updatedAt ? Date.parse(String(cloudSnap.updatedAt)) || 0 : 0;
-        const localEmpty = !Array.isArray(currentLocal.students) || currentLocal.students.length === 0;
-
-        if (cloudSnap && (localIsSeed || localEmpty || cloudTimeMs >= localTimeMs || (cloudSnap.students || []).length > 0 || (cloudSnap.leads || []).length > 0)) {
-          const mergedStudents = localIsSeed
-            ? mergeStudentsSafely([], cloudSnap.students || [])
-            : mergeStudentsSafely(currentLocal.students || [], cloudSnap.students || []);
-          const mergedLeads = localIsSeed
-            ? mergeRecordsByKeySafely([], cloudSnap.leads || [], 'id', 'leads')
-            : mergeRecordsByKeySafely(currentLocal.leads || [], cloudSnap.leads || [], 'id', 'leads');
-          const mergedBatches = localIsSeed
-            ? mergeRecordsByKeySafely([], cloudSnap.batches || [], 'code', 'batches')
-            : mergeRecordsByKeySafely(currentLocal.batches || [], cloudSnap.batches || [], 'code', 'batches');
-          const mergedCourses = localIsSeed
-            ? mergeRecordsByKeySafely([], cloudSnap.courses || [], 'id', 'courses')
-            : mergeRecordsByKeySafely(currentLocal.courses || [], cloudSnap.courses || [], 'id', 'courses');
-          const mergedStaff = localIsSeed
-            ? mergeRecordsByKeySafely([], cloudSnap.staff || [], 'id', 'staff')
-            : mergeRecordsByKeySafely(currentLocal.staff || [], cloudSnap.staff || [], 'id', 'staff');
-          const mergedAttendance = cloudSnap.attendance
-            ? mergeAttendanceSafely(currentLocal.attendance || {}, cloudSnap.attendance)
-            : currentLocal.attendance;
-
-          const hydrated = normalizeLoadedState({
-            ...currentLocal,
-            ...cloudSnap,
-            students: mergedStudents,
-            leads: mergedLeads,
-            batches: mergedBatches,
-            courses: mergedCourses,
-            staff: mergedStaff,
-            attendance: mergedAttendance,
-            settings: {
-              ...currentLocal.settings,
-              ...(cloudSnap.settings || {})
-            }
+        if (!localIsSeed) {
+          // Non-destructive merge imports this device's unique records into the one shared snapshot.
+          const merged = await dualWriteToCloud(localState, {
+            interactiveAuth: false,
+            skipPreFetch: false
           });
-          (hydrated as any).updatedAt = cloudSnap.updatedAt || new Date().toISOString();
-          (hydrated as any).isSeedData = false;
-          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-          setLastCloudSyncAt(nowStr);
-          setState(hydrated);
-          stateRef.current = hydrated;
-          saveCachedStudents(hydrated.students);
-          syncWindowInstituteDB(hydrated);
-          await saveStateToStorage(hydrated, { preserveTimestamp: true });
+          if (!merged.ok) {
+            hasUnsyncedLocalChangesRef.current = true;
+            recordSyncError(merged.message || 'Could not merge this device into the shared Firebase workspace.');
+            showToast('⚠️ Local records are safe, but shared sync failed. Check Firebase sign-in and permissions.');
+            attachLiveListener();
+            return;
+          }
+          hasUnsyncedLocalChangesRef.current = false;
+          if (merged.state) await applyWorkspaceState(merged.state);
+        } else {
+          const pulled = await masterFetchFromCloud(localState, {
+            interactiveAuth: false,
+            onLoginHydrate: true
+          });
+          if (pulled.updated && pulled.state) await applyWorkspaceState(pulled.state);
         }
 
-        const result = await masterFetchFromCloud(stateRef.current, {
-          interactiveAuth: false,
-          onLoginHydrate: true
-        });
-        if (result.updated && result.state) {
-          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-          setLastCloudSyncAt(nowStr);
-          setState(result.state);
-          stateRef.current = result.state;
-          saveCachedStudents(result.state.students);
-          syncWindowInstituteDB(result.state);
-          await saveStateToStorage(result.state, { preserveTimestamp: true });
-        }
-      } catch {
-        // non-blocking fallback
+        if (cancelled) return;
+        isSharedWorkspaceHydratedRef.current = true;
+        attachLiveListener();
+      } catch (error: any) {
+        hasUnsyncedLocalChangesRef.current = true;
+        recordSyncError(error?.message || 'Initial shared workspace reconciliation failed.', error);
+        showToast('⚠️ Shared Firebase sync needs attention. Your local records have been preserved.');
+        attachLiveListener();
       }
-    })();
+    };
 
+    isSharedWorkspaceHydratedRef.current = false;
+    void reconcileBeforeListening();
 
     return () => {
+      cancelled = true;
       unsubscribe();
+      isSharedWorkspaceHydratedRef.current = false;
     };
-  }, [currentUser?.uid]);
+  }, [currentUser?.uid, isLocalStateReady, isOnline]);
 
-  // Cloud-First Initialization on Mount:
-  // 1. Do NOT rely solely on local storage.
-  // 2. Immediately trigger fetchMasterSnapshotFromFirestore() on mount.
-  // 3. Compare cloudData.updatedAt against local storage; if cloud is newer or local is empty/seed, hydrate immediately into state, localStorage, and IndexedDB.
+  // Load this device's offline cache first. Shared Firebase reconciliation starts only after
+  // the real Google user is authenticated, preventing stale cloud snapshots from erasing local-only records.
   useEffect(() => {
     async function init() {
       const savedCourses = loadSavedCoursesFromStorage();
@@ -646,55 +566,7 @@ export default function App() {
       const quota = await checkStorageQuota(loaded);
       setStorageQuota(quota);
 
-      if (typeof navigator === 'undefined' || navigator.onLine) {
-        try {
-          const cloudData = await fetchMasterSnapshotFromFirestore('institute_master_data');
-          const localIsSeed = Boolean((loaded as any).isSeedData);
-          const localTimeMs = localIsSeed
-            ? 0
-            : Date.parse(String((loaded as any).updatedAt || loaded.settings?.lastUpdated || '')) || 0;
-          const cloudTimeMs = cloudData?.updatedAt ? Date.parse(String(cloudData.updatedAt)) || 0 : 0;
-          const localEmpty = !Array.isArray(loaded.students) || loaded.students.length === 0;
-
-          if (cloudData && (localIsSeed || localEmpty || cloudTimeMs >= localTimeMs)) {
-            const hydrated = normalizeLoadedState({
-              ...loaded,
-              ...cloudData,
-              settings: {
-                ...loaded.settings,
-                ...(cloudData.settings || {})
-              }
-            });
-            (hydrated as any).updatedAt = cloudData.updatedAt || new Date().toISOString();
-            (hydrated as any).isSeedData = false;
-            const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-            setLastCloudSyncAt(nowStr);
-            setState(hydrated);
-            stateRef.current = hydrated;
-            saveCachedStudents(hydrated.students);
-            syncWindowInstituteDB(hydrated);
-            await saveStateToStorage(hydrated, { preserveTimestamp: true });
-          }
-
-          const cloudResult = await masterFetchFromCloud(stateRef.current, {
-            interactiveAuth: false,
-            onLoginHydrate: true
-          });
-          if (cloudResult.updated && cloudResult.state) {
-            const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-            setLastCloudSyncAt(nowStr);
-            setState(cloudResult.state);
-            stateRef.current = cloudResult.state;
-            saveCachedStudents(cloudResult.state.students);
-            syncWindowInstituteDB(cloudResult.state);
-            await saveStateToStorage(cloudResult.state, { preserveTimestamp: true });
-          }
-        } catch {
-          // Offline-first fallback already active
-        }
-      }
-    }
-    init();
+      setIsLocalStateReady(true);   init();
 
     // Online / Offline listeners with automatic cloud flush and bidirectional reconciliation on reconnection
     const handleOnline = async () => {
