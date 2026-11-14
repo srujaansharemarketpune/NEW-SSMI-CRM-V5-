@@ -12,7 +12,6 @@ import {
 import {
   auth,
   savePersistedAdminSession,
-  loadPersistedAdminSession,
   clearPersistedAdminSession
 } from './firebase';
 
@@ -87,54 +86,6 @@ export interface AuthSessionResult {
 }
 
 /**
- * Constructs a pre-logged-in session User object for the active Master Admin / Operator cache
- */
-export function buildDefaultMasterAdminUser(email = PRIMARY_ADMIN_EMAIL, name?: string): User {
-  const cleanEmail = email.trim().toLowerCase() === PRIMARY_ADMIN_ALIAS_EMAIL
-    ? PRIMARY_ADMIN_EMAIL
-    : email.trim().toLowerCase() || PRIMARY_ADMIN_EMAIL;
-  const isOp = cleanEmail === SECONDARY_OPERATOR_EMAIL;
-  const displayName = name || (isOp ? 'Uday Hajare' : 'Prasad Sir');
-  const uid = isOp ? 'staff_operator_uday' : 'srujaan_master_admin_root';
-  return {
-    uid,
-    email: cleanEmail,
-    emailVerified: true,
-    displayName,
-    isAnonymous: false,
-    photoURL: null,
-    phoneNumber: null,
-    providerId: 'google.com',
-    metadata: {},
-    providerData: [
-      {
-        providerId: 'google.com',
-        uid: cleanEmail,
-        displayName,
-        email: cleanEmail,
-        phoneNumber: null,
-        photoURL: null
-      }
-    ],
-    refreshToken: '',
-    tenantId: null,
-    delete: async () => {},
-    getIdToken: async () => 'default-master-admin-token',
-    getIdTokenResult: async () => ({
-      token: 'default-master-admin-token',
-      authTime: new Date().toISOString(),
-      issuedAtTime: new Date().toISOString(),
-      expirationTime: new Date(Date.now() + 86400000).toISOString(),
-      signInProvider: 'google.com',
-      signInSecondFactor: null,
-      claims: { email: cleanEmail, email_verified: true }
-    }),
-    reload: async () => {},
-    toJSON: () => ({ uid, email: cleanEmail })
-  } as unknown as User;
-}
-
-/**
  * Synchronously resolves the active CRM session from `ssmi_crm_user_session` (defaulting to Prasad Sir / Master Admin)
  * so the app boots straight into the dashboard with zero login wall. Returns null only when explicitly signed out.
  */
@@ -148,10 +99,6 @@ export function getInitialAuthSession(): AuthSessionResult | null {
   return null;
 }
 
-/** @deprecated Quick-resume local sessions cannot authenticate with Firebase. */
-export function loginWithDefaultMasterAdmin(): AuthSessionResult {
-  throw new Error('Quick Resume is disabled. Continue with Google using srujaansharemarketpune@gmail.com to access shared cloud data.');
-}
 
 let redirectCheckPromise: Promise<AuthSessionResult | null> | null = null;
 
