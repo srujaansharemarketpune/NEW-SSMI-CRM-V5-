@@ -487,6 +487,8 @@ export default function App() {
 
     const unsubscribe = subscribeToCloudUpdates('institute_master_data', (remoteData, hasPendingWrites) => {
       if (hasPendingWrites || !remoteData) return;
+      // Never replace a local edit that has not yet been acknowledged by the canonical cloud write.
+      if (hasUnsyncedLocalChangesRef.current) return;
 
       // Ignore self-originated echoes while local debounce is still settling
       const isSameDevice = remoteData.deviceId && remoteData.deviceId === getLocalDeviceId();
@@ -502,51 +504,28 @@ export default function App() {
         const remotePayload = remoteData.payload ? remoteData.payload : remoteData;
         if (remotePayload && (Array.isArray(remotePayload.students) || remotePayload.settings)) {
           const currentLocal = stateRef.current;
-          const isLocalSeed = Boolean((currentLocal as any).isSeedData);
 
-          const mergedStudents = Array.isArray(remotePayload.students)
-            ? isLocalSeed
-              ? mergeStudentsSafely([], remotePayload.students)
-              : mergeStudentsSafely(currentLocal.students || [], remotePayload.students)
-            : currentLocal.students;
-
-          const mergedLeads = Array.isArray(remotePayload.leads)
-            ? isLocalSeed
-              ? mergeRecordsByKeySafely([], remotePayload.leads, 'id', 'leads')
-              : mergeRecordsByKeySafely(currentLocal.leads || [], remotePayload.leads, 'id', 'leads')
-            : currentLocal.leads;
-
-          const mergedBatches = Array.isArray(remotePayload.batches)
-            ? isLocalSeed
-              ? mergeRecordsByKeySafely([], remotePayload.batches, 'code', 'batches')
-              : mergeRecordsByKeySafely(currentLocal.batches || [], remotePayload.batches, 'code', 'batches')
-            : currentLocal.batches;
-
-          const mergedCourses = Array.isArray(remotePayload.courses)
-            ? isLocalSeed
-              ? mergeRecordsByKeySafely([], remotePayload.courses, 'id', 'courses')
-              : mergeRecordsByKeySafely(currentLocal.courses || [], remotePayload.courses, 'id', 'courses')
-            : currentLocal.courses;
-
-          const mergedStaff = Array.isArray(remotePayload.staff)
-            ? isLocalSeed
-              ? mergeRecordsByKeySafely([], remotePayload.staff, 'id', 'staff')
-              : mergeRecordsByKeySafely(currentLocal.staff || [], remotePayload.staff, 'id', 'staff')
-            : currentLocal.staff;
-
-          const mergedAttendance = remotePayload.attendance
-            ? mergeAttendanceSafely(currentLocal.attendance || {}, remotePayload.attendance)
-            : currentLocal.attendance;
-
+          // The canonical master document is a complete snapshot. Treat it as authoritative;
+          // union-merging stale browser arrays here caused deleted/old records to reappear.
           const normalized = normalizeLoadedState({
             ...currentLocal,
             ...remotePayload,
-            students: mergedStudents,
-            leads: mergedLeads,
-            batches: mergedBatches,
-            courses: mergedCourses,
-            staff: mergedStaff,
-            attendance: mergedAttendance,
+            students: Array.isArray(remotePayload.students)
+              ? mergeStudentsSafely([], remotePayload.students)
+              : currentLocal.students,
+            leads: Array.isArray(remotePayload.leads)
+              ? mergeRecordsByKeySafely([], remotePayload.leads, 'id', 'leads')
+              : currentLocal.leads,
+            batches: Array.isArray(remotePayload.batches)
+              ? mergeRecordsByKeySafely([], remotePayload.batches, 'code', 'batches')
+              : currentLocal.batches,
+            courses: Array.isArray(remotePayload.courses)
+              ? mergeRecordsByKeySafely([], remotePayload.courses, 'id', 'courses')
+              : currentLocal.courses,
+            staff: Array.isArray(remotePayload.staff)
+              ? mergeRecordsByKeySafely([], remotePayload.staff, 'id', 'staff')
+              : currentLocal.staff,
+            attendance: remotePayload.attendance || {},
             settings: {
               ...currentLocal.settings,
               ...(remotePayload.settings || {})
