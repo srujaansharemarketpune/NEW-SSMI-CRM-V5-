@@ -3908,43 +3908,11 @@ export async function migrateLegacyWorkspaceToCanonical(): Promise<void> {
 export async function softDeleteCanonicalDoc(
   collectionName: string,
   docId: string,
-  _keyField = 'id'
+  keyField = 'id'
 ): Promise<boolean> {
-  const safeId = toSafeDocId(docId);
-  if (
-    collectionName === 'students' ||
-    collectionName === 'leads' ||
-    collectionName === 'batches' ||
-    collectionName === 'staff' ||
-    collectionName === 'courses'
-  ) {
-    markDeletedId(collectionName, safeId);
-  }
-  if (!(await ensureAuthorizedSession()) || !auth.currentUser) {
-    return false;
-  }
-  const nowIso = new Date().toISOString();
-  const tombstonePayload = {
-    id: safeId,
-    isDeleted: true,
-    deletedAt: nowIso,
-    updatedAt: nowIso,
-    serverUpdatedAt: serverTimestamp(),
-    workspaceId: SHARED_INSTITUTE_ROOT_ID
-  };
-  try {
-    await Promise.allSettled([
-      deleteDoc(getSsmiDocRef(collectionName, safeId)),
-      setDoc(getDocRef(collectionName, safeId), tombstonePayload, { merge: true })
-    ]);
-    recordCloudWriteSuccess(true);
-    return true;
-  } catch (err) {
-    console.warn(`[Firestore Sync] Delete warning on ${collectionName}/${safeId}:`, err);
-    return false;
-  }
+  if (!['students', 'leads', 'batches', 'staff', 'courses'].includes(collectionName)) return false;
+  return deleteCanonicalWorkspaceRecord(collectionName as keyof DeletedRecordsRegistry, docId, keyField);
 }
-
 export async function syncCollectionRecords<T extends Record<string, any>>(
   collectionName: string,
   secondArg: T[] | string,
