@@ -1,0 +1,2876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="description" content="Srujaan Institute Management System — Offline-First PWA for Student, Batch, Attendance, Lead CRM, WhatsApp, Fee, Certificate & AI Operations" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Srujaan Institute Management System — Offline-First Operations Suite</title>
+  <link id="pwa-manifest-link" rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Srujaan%20IMS%22%2C%22short_name%22%3A%22Srujaan%20IMS%22%2C%22display%22%3A%22standalone%22%7D" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%232563eb%27/%3E%3C/svg%3E" />
+
+  
+  <!-- Google Identity Services (GIS) & Google API Client for Official Google Integrations -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js" async defer></script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js" async defer></script>
+
+  <!-- 100% Self-Contained Offline-First Bundle (Zero Blocking External CDN Scripts) -->
+
+  
+  <!-- Modular Segregated CSS Architecture -->
+  <link rel="stylesheet" href="css/themes.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/print.css">
+</head>
+
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- DEDICATED PRINT SURFACE CONTAINER (HIDDEN ON SCREEN, ACTIVE ON PRINT) -->
+  <div id="print-surface-container" class="hidden"></div>
+
+  <!-- TOAST NOTIFICATION STACK -->
+  <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+  <!-- ==========================================================================
+       MAIN APPLICATION SHELL
+       ========================================================================== -->
+  <div id="app-shell" class="min-h-screen flex flex-col">
+
+    <!-- TOP OPERATIONAL STATUS & BRAND HEADER -->
+    <header style="background-color: var(--bg-nav); color: #ffffff;" class="sticky top-0 z-30 border-b border-slate-800 shadow-md">
+      <!-- Top Bar: Brand, Live Operational Metrics, Connectivity, Language & Quick Actions -->
+      <div class="max-w-[1600px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        <!-- Brand Identity -->
+        <div class="flex items-center gap-3">
+          <div id="header-logo-box" class="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 overflow-hidden"></div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h1 id="header-inst-name" class="text-base sm:text-lg font-extrabold tracking-tight text-white">Srujaan Share Market Institute</h1>
+              <span id="network-status-badge" class="ims-badge ims-badge-emerald" title="Local IndexedDB Primary Storage Active">● Offline-Ready PWA</span>
+            </div>
+            <p id="header-inst-branch" class="text-xs text-slate-400">Shivajinagar Campus, FC Road, Pune • <span id="header-live-date" class="font-mono-code text-slate-300"></span></p>
+          </div>
+        </div>
+
+        <!-- Live Operational Status Pills -->
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="switchTab('students')" class="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs flex items-center gap-1.5 text-slate-200 cursor-pointer" title="Active Enrolled Students">
+            <span class="text-slate-400" data-i18n="ticker_students">Students:</span>
+            <strong id="ticker-students-count" class="font-mono-code text-emerald-400">0</strong>
+          </button>
+          <button onclick="switchTab('attendance')" class="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs flex items-center gap-1.5 text-slate-200 cursor-pointer" title="Today's Attendance Rate">
+            <span class="text-slate-400" data-i18n="ticker_attendance">Today Att:</span>
+            <strong id="ticker-attendance-rate" class="font-mono-code text-sky-400">0%</strong>
+          </button>
+          <button onclick="switchTab('leads')" class="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs flex items-center gap-1.5 text-slate-200 cursor-pointer" title="Due/Overdue Lead Follow-ups">
+            <span class="text-slate-400" data-i18n="ticker_followups">Follow-ups:</span>
+            <strong id="ticker-followups-due" class="font-mono-code text-amber-400">0</strong>
+          </button>
+          <button onclick="switchTab('fees')" class="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs flex items-center gap-1.5 text-slate-200 cursor-pointer" title="Total Pending Fee Balance">
+            <span class="text-slate-400" data-i18n="ticker_fees_due">Fees Due:</span>
+            <strong id="ticker-fees-due" class="font-mono-code text-rose-400">₹0</strong>
+          </button>
+          <button onclick="switchTab('sync-settings')" class="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs flex items-center gap-1.5 text-slate-200 cursor-pointer" title="Pending Cloud Sync Queue & Backup Status">
+            <span class="text-slate-400" data-i18n="ticker_sync">Sync Queue:</span>
+            <strong id="ticker-sync-count" class="font-mono-code text-violet-400">0</strong>
+          </button>
+
+          <!-- Language Selector (EN / HI / MR) -->
+          <select id="global-lang-select" onchange="changeAppLanguage(this.value)" aria-label="Select Interface Language" class="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold text-white cursor-pointer">
+            <option value="en">🇬🇧 English</option>
+            <option value="hi">🇮🇳 हिंदी (Hindi)</option>
+            <option value="mr">🚩 मराठी (Marathi)</option>
+          </select>
+
+          <!-- Executive Display Indicator -->
+          <span class="px-2.5 py-1 rounded-lg bg-slate-800/90 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5" title="Sovereign Executive High-Contrast Theme Active">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span>Executive High-Contrast</span>
+          </span>
+
+          <!-- Offline AI Copilot Trigger -->
+          <button onclick="toggleAiDrawer(true)" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold flex items-center gap-1.5 shadow cursor-pointer">
+            <span>🤖</span>
+            <span data-i18n="btn_ai_assistant">AI Assistant</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Backup & Storage Quota Notice Banner (Shown when backup is overdue or storage notice needed) -->
+      <div id="backup-reminder-banner" class="hidden bg-amber-500/20 border-t border-amber-500/40 px-4 py-1.5 text-xs text-amber-200">
+        <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
+          <span id="backup-reminder-text">⚠️ Local database has unsaved changes since your last manual JSON backup.</span>
+          <div class="flex items-center gap-2">
+            <button onclick="downloadFullBackupJson()" class="px-2.5 py-0.5 rounded bg-amber-500 text-slate-950 font-extrabold text-[11px] cursor-pointer">Download Backup Now</button>
+            <button onclick="document.getElementById('backup-reminder-banner').classList.add('hidden')" class="text-amber-300 underline text-[11px] cursor-pointer">Dismiss</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Primary Module Navigation Bar (12 Core Modules) -->
+      <nav class="max-w-[1600px] mx-auto px-4 py-1.5 overflow-x-auto flex items-center gap-1 border-t border-slate-800/80" aria-label="Main Navigation">
+        <button onclick="switchTab('dashboard')" id="nav-btn-dashboard" class="nav-tab-btn active">
+          <span>📊</span> <span data-i18n="nav_dashboard">Dashboard</span>
+        </button>
+        <button onclick="switchTab('students')" id="nav-btn-students" class="nav-tab-btn">
+          <span>🎓</span> <span data-i18n="nav_students">Students</span>
+        </button>
+        <button onclick="switchTab('batches')" id="nav-btn-batches" class="nav-tab-btn">
+          <span>🏫</span> <span data-i18n="nav_batches">Courses & Batches</span>
+        </button>
+        <button onclick="switchTab('attendance')" id="nav-btn-attendance" class="nav-tab-btn">
+          <span>✅</span> <span data-i18n="nav_attendance">Attendance Ledger</span>
+        </button>
+        <button onclick="switchTab('leads')" id="nav-btn-leads" class="nav-tab-btn">
+          <span>🎯</span> <span data-i18n="nav_leads">Lead CRM</span>
+        </button>
+        <button onclick="switchTab('whatsapp')" id="nav-btn-whatsapp" class="nav-tab-btn">
+          <span>💬</span> <span data-i18n="nav_whatsapp">WhatsApp & Presets</span>
+        </button>
+        <button onclick="switchTab('daily-updates')" id="nav-btn-daily-updates" class="nav-tab-btn">
+          <span>📣</span> <span data-i18n="nav_daily_updates">Daily Updates Queue</span>
+        </button>
+        <button onclick="switchTab('fees')" id="nav-btn-fees" class="nav-tab-btn">
+          <span>💳</span> <span data-i18n="nav_fees">Fees & Receipts</span>
+        </button>
+        <button onclick="switchTab('certificates')" id="nav-btn-certificates" class="nav-tab-btn">
+          <span>🏆</span> <span data-i18n="nav_certificates">Certificates</span>
+        </button>
+        <button onclick="switchTab('portal-staff')" id="nav-btn-portal-staff" class="nav-tab-btn">
+          <span>👥</span> <span data-i18n="nav_portal_staff">Staff & Student Portal</span>
+        </button>
+        <button onclick="switchTab('ai-center')" id="nav-btn-ai-center" class="nav-tab-btn">
+          <span>🧠</span> <span data-i18n="nav_ai_center">AI Copilot (Offline/Online)</span>
+        </button>
+        <button onclick="switchTab('settings')" id="nav-btn-settings" class="nav-tab-btn">
+          <span>⚙️</span> <span data-i18n="nav_settings">Master Settings</span>
+        </button>
+      </nav>
+    </header>
+
+    <!-- ==========================================================================
+         MAIN WORKSPACE CONTAINER (12 MODULE VIEWS)
+         ========================================================================== -->
+    <main id="main-workspace" class="flex-1 max-w-[1600px] w-full mx-auto px-4 py-5 space-y-6">
+
+      <!-- ========================================================================
+           VIEW 1: INTERACTIVE DASHBOARD & ANALYTICS
+           ======================================================================== -->
+      <section id="view-dashboard" class="tab-view space-y-5">
+        <!-- Quick Action & Date Filter Bar -->
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="dash_title">Executive Institute Operations Dashboard</h2>
+            <p class="text-xs" style="color: var(--text-muted);" data-i18n="dash_subtitle">100% real-time metrics computed from local IndexedDB records • Works completely offline</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="flex items-center gap-1.5 text-xs">
+              <span class="font-bold" style="color: var(--text-secondary);" data-i18n="lbl_date_filter">Reference Date:</span>
+              <input type="date" id="dash-ref-date" onchange="renderDashboard()" class="ims-input" style="width: 150px; padding: 0.3rem 0.5rem;" />
+            </div>
+            <button onclick="openStudentModal()" class="ims-btn ims-btn-primary ims-btn-sm">+ <span data-i18n="btn_add_student">Add Student</span></button>
+            <button onclick="openLeadModal()" class="ims-btn ims-btn-emerald ims-btn-sm">+ <span data-i18n="btn_add_lead">Add Lead</span></button>
+            <button onclick="switchTab('attendance')" class="ims-btn ims-btn-outline ims-btn-sm">✅ <span data-i18n="btn_mark_attendance">Mark Attendance</span></button>
+            <button onclick="switchTab('daily-updates')" class="ims-btn ims-btn-outline ims-btn-sm">📣 <span data-i18n="btn_daily_wa">Daily WhatsApp Queue</span></button>
+          </div>
+        </div>
+
+        <!-- 8 Interactive KPI Cards -->
+        <div class="ims-grid-4" id="dashboard-kpi-grid"></div>
+
+        <!-- Primary Interactive Visual Analytics Suite (6 SVG Graphical Representations) -->
+        <div class="ims-grid-3">
+          <!-- Chart 1: SVG Donut & Radial Ring for Fee Collection -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold" data-i18n="chart_fees_title">Fee Collection & Receivables Donut</h3>
+                <p class="text-[11px]" style="color: var(--text-muted);">Paid vs. Upcoming vs. Overdue Installments</p>
+              </div>
+              <button onclick="switchTab('fees')" class="ims-btn ims-btn-outline ims-btn-sm">Open Ledger</button>
+            </div>
+            <div id="chart-fees-container"></div>
+          </div>
+
+          <!-- Chart 2: SVG Grouped Bar & Capacity Chart by Batch -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold" data-i18n="chart_batch_title">Batch Seat Utilization & Attendance %</h3>
+                <p class="text-[11px]" style="color: var(--text-muted);">Interactive SVG bar comparison across active batches</p>
+              </div>
+              <button onclick="switchTab('batches')" class="ims-btn ims-btn-outline ims-btn-sm">Batches</button>
+            </div>
+            <div id="chart-batches-container" class="space-y-2.5"></div>
+          </div>
+
+          <!-- Chart 3: SVG Conversion Funnel Chart -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold" data-i18n="chart_leads_title">10-Stage Lead Conversion Funnel</h3>
+                <p class="text-[11px]" style="color: var(--text-muted);">Enquiry-to-Admission pipeline velocity</p>
+              </div>
+              <span id="dash-conversion-badge" class="ims-badge ims-badge-emerald">0% Converted</span>
+            </div>
+            <div id="chart-leads-container" class="space-y-2"></div>
+          </div>
+        </div>
+
+        <!-- Secondary Graphical Analytics Row (Area Trend, Attendance Distribution & Course Share) -->
+        <div class="ims-grid-3">
+          <!-- Chart 4: SVG Revenue & Enrollment Trajectory Area Spline Chart -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold">📈 Fee Collection & Enrollment Trajectory</h3>
+                <p class="text-[11px]" style="color: var(--text-muted);">Cumulative installment inflow & admission curve</p>
+              </div>
+              <span class="ims-badge ims-badge-blue">Live SVG Area</span>
+            </div>
+            <div id="chart-revenue-trend-container"></div>
+          </div>
+
+          <!-- Chart 5: SVG Attendance Status Breakdown & Health -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold">📊 Attendance Status Distribution</h3>
+                <p class="text-[11px]" style="color: var(--text-muted);">Present, Late, Excused Leave & Absent breakdown</p>
+              </div>
+              <button onclick="switchTab('attendance')" class="ims-btn ims-btn-outline ims-btn-sm">Register</button>
+            </div>
+            <div id="chart-attendance-dist-container"></div>
+          </div>
+
+          <!-- Chart 6: Course-Wise Revenue & Enquiry Share -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold">🏆 Course-Wise Revenue & Demand Share</h3>
+                <p class="text-[11px]" style="color: var(--text-muted);">Net fee billed & active leads per curriculum track</p>
+              </div>
+              <button onclick="switchTab('batches'); setBatchSubView('courses')" class="ims-btn ims-btn-outline ims-btn-sm">Courses</button>
+            </div>
+            <div id="chart-course-share-container"></div>
+          </div>
+        </div>
+
+        <!-- Operational Action Queues (4 Columns) -->
+        <div class="ims-grid-2">
+          <!-- Follow-ups & Demos Due -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold" data-i18n="dash_followups_heading">🎯 Demos & Lead Follow-Ups Due / Overdue</h3>
+                <p class="text-xs" style="color: var(--text-muted);">Click WhatsApp to open prefilled follow-up chat</p>
+              </div>
+              <button onclick="switchTab('leads')" class="ims-btn ims-btn-outline ims-btn-sm">All Leads</button>
+            </div>
+            <div id="dash-followups-list" class="space-y-2 max-h-72 overflow-y-auto"></div>
+          </div>
+
+          <!-- Today's Attendance & Absent / Consecutive Absence Alerts -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold" data-i18n="dash_attendance_alerts_heading">⚠️ Low Attendance & Absence Follow-Up Alerts</h3>
+                <p class="text-xs" style="color: var(--text-muted);">Students absent on selected date or below 75% attendance</p>
+              </div>
+              <button onclick="switchTab('attendance')" class="ims-btn ims-btn-outline ims-btn-sm">Attendance Register</button>
+            </div>
+            <div id="dash-attendance-alerts-list" class="space-y-2 max-h-72 overflow-y-auto"></div>
+          </div>
+
+          <!-- Overdue Fee Installments -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold" data-i18n="dash_overdue_fees_heading">💳 Overdue & Upcoming Fee Installments</h3>
+                <p class="text-xs" style="color: var(--text-muted);">Direct fee reminder & receipt shortcuts</p>
+              </div>
+              <button onclick="switchTab('fees')" class="ims-btn ims-btn-outline ims-btn-sm">Fee Ledger</button>
+            </div>
+            <div id="dash-overdue-fees-list" class="space-y-2 max-h-72 overflow-y-auto"></div>
+          </div>
+
+          <!-- Upcoming Lectures & Recent Audit Activity -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold" data-i18n="dash_lectures_audit_heading">📅 Upcoming Lectures & Recent Audit Trail</h3>
+                <p class="text-xs" style="color: var(--text-muted);">Scheduled sessions & recent record mutations</p>
+              </div>
+              <button onclick="switchTab('sync-settings'); setSyncSubTab('audit')" class="ims-btn ims-btn-outline ims-btn-sm">Full Audit Log</button>
+            </div>
+            <div id="dash-lectures-audit-list" class="space-y-2 max-h-72 overflow-y-auto"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 2: STUDENT MANAGEMENT DATABASE
+           ======================================================================== -->
+      <section id="view-students" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="stu_title">Enrolled Student Database</h2>
+            <p class="text-xs" style="color: var(--text-muted);">Complete student records, batch assignments, attendance %, fee balances, WhatsApp actions & bulk tools</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button onclick="openStudentModal()" class="ims-btn ims-btn-primary">+ <span data-i18n="btn_add_student">New Student Admission</span></button>
+            <button onclick="exportModuleCsv('students')" class="ims-btn ims-btn-outline ims-btn-sm">⬇️ CSV</button>
+            <button onclick="exportMasterExcel()" class="ims-btn ims-btn-outline ims-btn-sm">📊 Excel (.xlsx)</button>
+          </div>
+        </div>
+
+        <!-- Filters, Search & Bulk Actions Toolbar -->
+        <div class="ims-card p-4 space-y-3">
+          <div class="ims-grid-4">
+            <div>
+              <label class="ims-label">Search Name / ID / Phone</label>
+              <input type="text" id="stu-search-input" oninput="renderStudents()" placeholder="e.g. Omkar, SSMI-2026-001, 9823..." class="ims-input" />
+            </div>
+            <div>
+              <label class="ims-label">Filter by Batch</label>
+              <select id="stu-filter-batch" onchange="renderStudents()" class="ims-select">
+                <option value="">All Batches</option>
+                <option value="__UNASSIGNED__">⚠️ Unassigned Only</option>
+              </select>
+            </div>
+            <div>
+              <label class="ims-label">Filter by Enrollment Status</label>
+              <select id="stu-filter-status" onchange="renderStudents()" class="ims-select">
+                <option value="ACTIVE_DEFAULT">Active & On-Hold (Hide Archived)</option>
+                <option value="Active">Active Only</option>
+                <option value="Completed">Completed</option>
+                <option value="On Hold">On Hold</option>
+                <option value="Archived">Archived</option>
+                <option value="ALL">All Records</option>
+              </select>
+            </div>
+            <div>
+              <label class="ims-label">Sort By</label>
+              <select id="stu-sort-by" onchange="renderStudents()" class="ims-select">
+                <option value="regId_asc">Student ID (Ascending)</option>
+                <option value="name_asc">Name (A → Z)</option>
+                <option value="enrollDate_desc">Enrollment Date (Newest)</option>
+                <option value="balance_desc">Pending Fee (Highest First)</option>
+                <option value="attendance_asc">Attendance % (Lowest First)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Bulk Action Bar -->
+          <div id="stu-bulk-bar" class="hidden ims-subtle-box p-3 flex flex-wrap items-center justify-between gap-2">
+            <div class="text-xs font-extrabold"><span id="stu-selected-count">0</span> student(s) selected</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <select id="stu-bulk-batch-select" class="ims-select" style="width: 190px; padding: 0.25rem 0.5rem; font-size: 0.75rem;">
+                <option value="">Assign Batch...</option>
+              </select>
+              <button onclick="applyBulkStudentBatch()" class="ims-btn ims-btn-primary ims-btn-sm">Assign Batch</button>
+              <button onclick="queueSelectedStudentsForWhatsApp()" class="ims-btn ims-btn-emerald ims-btn-sm">💬 Add to WhatsApp Queue</button>
+              <button onclick="archiveSelectedStudents()" class="ims-btn ims-btn-outline ims-btn-sm">📦 Archive Selected</button>
+              <button onclick="clearStudentSelection()" class="ims-btn ims-btn-ghost ims-btn-sm">Clear</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Students Table -->
+        <div class="ims-table-wrap">
+          <table class="ims-table">
+            <thead>
+              <tr>
+                <th style="width: 36px;"><input type="checkbox" id="stu-select-all-cb" onchange="toggleSelectAllStudents(this.checked)" /></th>
+                <th>Student ID & Name</th>
+                <th>Contact & WhatsApp</th>
+                <th>Course & Batch</th>
+                <th>Status & Joined</th>
+                <th>Attendance</th>
+                <th>Fee Summary</th>
+                <th class="text-right">Quick Actions</th>
+              </tr>
+            </thead>
+            <tbody id="students-table-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 3: COURSE & BATCH MANAGEMENT
+           ======================================================================== -->
+      <section id="view-batches" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="batch_title">Course & Batch Operations</h2>
+            <p class="text-xs" style="color: var(--text-muted);">Manage batches, courses, lecture schedules, student rosters, batch transfers & unassigned students</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="flex items-center gap-1">
+              <button onclick="setBatchSubView('cards')" id="batch-view-btn-cards" class="sub-pill-btn active">🗂️ Batch Cards</button>
+              <button onclick="setBatchSubView('table')" id="batch-view-btn-table" class="sub-pill-btn">📋 Table View</button>
+              <button onclick="setBatchSubView('unassigned')" id="batch-view-btn-unassigned" class="sub-pill-btn">⚠️ Unassigned Students (<span id="unassigned-count-pill">0</span>)</button>
+              <button onclick="setBatchSubView('courses')" id="batch-view-btn-courses" class="sub-pill-btn">📚 Courses Catalog</button>
+            </div>
+            <button onclick="openBatchModal()" class="ims-btn ims-btn-primary ims-btn-sm">+ Create Batch</button>
+            <button onclick="openCourseModal()" class="ims-btn ims-btn-outline ims-btn-sm">+ Add Course</button>
+            <button onclick="openLectureModal()" class="ims-btn ims-btn-emerald ims-btn-sm">📅 Schedule Lecture</button>
+          </div>
+        </div>
+
+        <!-- Batch Cards View -->
+        <div id="batch-subview-cards" class="ims-grid-2"></div>
+
+        <!-- Batch Table View -->
+        <div id="batch-subview-table" class="hidden ims-table-wrap">
+          <table class="ims-table">
+            <thead>
+              <tr>
+                <th>Batch ID & Name</th>
+                <th>Course</th>
+                <th>Mode & Instructor</th>
+                <th>Schedule & Dates</th>
+                <th>Enrolled / Capacity</th>
+                <th>Avg Attendance</th>
+                <th>Status</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="batches-table-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Unassigned Students View -->
+        <div id="batch-subview-unassigned" class="hidden ims-card p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-base font-extrabold">Students Without Batch Assignment</h3>
+              <p class="text-xs" style="color: var(--text-muted);">Assign these students to an active or upcoming batch immediately</p>
+            </div>
+          </div>
+          <div id="unassigned-students-container"></div>
+        </div>
+
+        <!-- Courses Catalog View -->
+        <div id="batch-subview-courses" class="hidden ims-table-wrap">
+          <table class="ims-table">
+            <thead>
+              <tr>
+                <th>Course ID</th>
+                <th>Course Name</th>
+                <th>Duration & Mode</th>
+                <th>Standard Fee</th>
+                <th>Instructor</th>
+                <th>Syllabus Overview</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="courses-table-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 4: ATTENDANCE LEDGER
+           ======================================================================== -->
+      <section id="view-attendance" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="att_title">Dedicated Attendance Register & Analytics</h2>
+            <p class="text-xs" style="color: var(--text-muted);">One-tap marking (Present, Absent, Late, Excused Leave, Not Marked), excused leave rules, low-attendance alerts & correction audit log</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button onclick="setAttendanceSubView('register')" id="att-sub-register" class="sub-pill-btn active">📝 Mark Register</button>
+            <button onclick="setAttendanceSubView('reports')" id="att-sub-reports" class="sub-pill-btn">📊 Student & Batch Reports</button>
+            <button onclick="setAttendanceSubView('alerts')" id="att-sub-alerts" class="sub-pill-btn">🚨 Low Attendance Alerts</button>
+            <button onclick="setAttendanceSubView('history')" id="att-sub-history" class="sub-pill-btn">🕒 Correction History</button>
+            <button onclick="exportModuleCsv('attendance')" class="ims-btn ims-btn-outline ims-btn-sm">⬇️ Export CSV</button>
+          </div>
+        </div>
+
+        <!-- Subview A: Daily Register -->
+        <div id="att-view-register" class="space-y-4">
+          <div class="ims-card p-4 space-y-3">
+            <div class="ims-grid-4">
+              <div>
+                <label class="ims-label">1. Select Batch</label>
+                <select id="att-batch-select" onchange="onAttendanceFilterChange()" class="ims-select"></select>
+              </div>
+              <div>
+                <div class="flex items-center justify-between">
+                  <label class="ims-label mb-0">2. Select Date</label>
+                  <div class="flex items-center gap-1">
+                    <button type="button" onclick="navAttendanceDate(-1)" class="badge-pill badge-slate text-[10px] cursor-pointer" title="Previous Day">◀ Prev</button>
+                    <button type="button" onclick="navAttendanceDate(0)" class="badge-pill badge-blue text-[10px] cursor-pointer" title="Today">Today</button>
+                    <button type="button" onclick="navAttendanceDate(1)" class="badge-pill badge-slate text-[10px] cursor-pointer" title="Next Day">Next ▶</button>
+                  </div>
+                </div>
+                <input type="date" id="att-date-select" onchange="onAttendanceFilterChange()" class="ims-input mt-1" />
+              </div>
+              <div>
+                <label class="ims-label">3. Lecture Topic / Session</label>
+                <input type="text" id="att-lecture-topic" placeholder="e.g. Price Action Multi-Timeframe Analysis" class="ims-input" />
+              </div>
+              <div>
+                <label class="ims-label">4. Session Status & Excused Rule</label>
+                <div class="flex items-center gap-2">
+                  <select id="att-session-status" onchange="saveAttendanceSessionMeta()" class="ims-select">
+                    <option value="Completed">✅ Conducted</option>
+                    <option value="Scheduled">📅 Scheduled</option>
+                    <option value="Cancelled">🚫 Lecture Cancelled (Excluded from %)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t" style="border-color: var(--border-subtle);">
+              <div class="flex flex-wrap items-center gap-2">
+                <button onclick="markAllBatchAttendance('Present')" class="ims-btn ims-btn-emerald ims-btn-sm">✓ Mark All Present</button>
+                <button onclick="markAllBatchAttendance('Not Marked')" class="ims-btn ims-btn-outline ims-btn-sm">↺ Reset All to Not Marked</button>
+                <label class="inline-flex items-center gap-1.5 text-xs font-bold ml-2 cursor-pointer">
+                  <input type="checkbox" id="att-excused-rule-cb" onchange="toggleExcusedLeaveRule(this.checked)" />
+                  <span>Exclude 'Excused Leave' from total required classes when computing %</span>
+                </label>
+              </div>
+              <div class="flex items-center gap-2">
+                <span id="att-save-status-badge" class="ims-badge ims-badge-emerald">✓ Saved locally</span>
+                <button onclick="saveCurrentAttendanceSheet()" class="ims-btn ims-btn-primary ims-btn-sm">💾 Save Register Snapshot</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-between gap-2 p-2.5 mb-2 rounded-lg border bg-surface-subtle" style="border-color: var(--border-subtle);">
+            <div class="text-xs font-bold" style="color: var(--text-secondary);">⚡ Single-Click Batch Register Actions:</div>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="markAllBatchStudents('Present')" class="btn-primary-glow text-xs py-1 px-3">✅ Mark All Present</button>
+              <button type="button" onclick="markAllBatchStudents('Absent')" class="badge-pill badge-crimson text-xs py-1 px-3 cursor-pointer">❌ Mark All Absent</button>
+              <button type="button" onclick="markAllBatchStudents('Not Marked')" class="badge-pill badge-slate text-xs py-1 px-3 cursor-pointer">↺ Reset Register</button>
+            </div>
+          </div>
+          <div class="ims-table-wrap">
+            <table class="ims-table">
+              <thead>
+                <tr>
+                  <th>Student ID & Name</th>
+                  <th>One-Tap Attendance Status</th>
+                  <th>Remark / Reason</th>
+                  <th>Overall Batch Attendance %</th>
+                  <th>Consecutive Absences</th>
+                  <th class="text-right">WhatsApp Action</th>
+                </tr>
+              </thead>
+              <tbody id="att-register-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Subview B: Daily / Weekly / Monthly / Student & Batch Reports -->
+        <div id="att-view-reports" class="hidden space-y-4">
+          <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <label class="text-xs font-bold">Report Period:</label>
+              <select id="att-report-period" onchange="renderAttendanceReports()" class="ims-select" style="width: 170px;">
+                <option value="all">All Recorded Sessions</option>
+                <option value="month">Current Month</option>
+                <option value="week">Last 7 Days</option>
+                <option value="today">Selected Date Only</option>
+              </select>
+              <select id="att-report-batch" onchange="renderAttendanceReports()" class="ims-select" style="width: 210px;">
+                <option value="">All Batches</option>
+              </select>
+            </div>
+            <div id="att-report-summary-pills" class="flex flex-wrap gap-2"></div>
+          </div>
+          <div class="ims-table-wrap">
+            <table class="ims-table">
+              <thead>
+                <tr>
+                  <th>Student</th>
+                  <th>Batch</th>
+                  <th>Conducted</th>
+                  <th>Present</th>
+                  <th>Late</th>
+                  <th>Absent</th>
+                  <th>Excused Leave</th>
+                  <th>Not Marked</th>
+                  <th>Attendance %</th>
+                </tr>
+              </thead>
+              <tbody id="att-reports-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Subview C: Low Attendance & Consecutive Absence Alerts -->
+        <div id="att-view-alerts" class="hidden ims-card p-4 space-y-3">
+          <h3 class="text-sm font-extrabold">Students Flagged for Low Attendance (&lt;75%) or Consecutive Absences (≥2)</h3>
+          <div id="att-alerts-container" class="space-y-2"></div>
+        </div>
+
+        <!-- Subview D: Attendance Correction History -->
+        <div id="att-view-history" class="hidden ims-table-wrap">
+          <table class="ims-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Student</th>
+                <th>Batch & Date</th>
+                <th>Previous Status → New Status</th>
+                <th>Actor & Note</th>
+              </tr>
+            </thead>
+            <tbody id="att-history-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 5: LEAD MANAGEMENT & CONVERSION CRM
+           ======================================================================== -->
+      <section id="view-leads" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="lead_title">Enquiry & Lead Conversion CRM</h2>
+            <p class="text-xs" style="color: var(--text-muted);">10-stage pipeline from New Enquiry to Admission Confirmed • Follow-up alerts, objection solver & 1-click student conversion</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button onclick="setLeadSubView('kanban')" id="lead-sub-kanban" class="sub-pill-btn active">🗂️ Kanban Board</button>
+            <button onclick="setLeadSubView('table')" id="lead-sub-table" class="sub-pill-btn">📋 Searchable Table</button>
+            <button onclick="setLeadSubView('followups')" id="lead-sub-followups" class="sub-pill-btn">⏰ Follow-Up Alerts</button>
+            <button onclick="setLeadSubView('wa-leads')" id="lead-sub-wa-leads" class="sub-pill-btn">💬 WhatsApp Leads & Objections</button>
+            <button onclick="setLeadSubView('reports')" id="lead-sub-reports" class="sub-pill-btn">📈 Conversion Report</button>
+            <button onclick="openLeadModal()" class="ims-btn ims-btn-emerald ims-btn-sm">+ Add Enquiry</button>
+            <button onclick="exportModuleCsv('leads')" class="ims-btn ims-btn-outline ims-btn-sm">⬇️ CSV</button>
+          </div>
+        </div>
+
+        <!-- Lead Filters Bar -->
+        <div class="ims-card p-4 ims-grid-4">
+          <div>
+            <label class="ims-label">Search Name / Phone / Area</label>
+            <input type="text" id="lead-search-input" oninput="renderLeads()" placeholder="Search prospect..." class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Filter by Course Interest</label>
+            <select id="lead-filter-course" onchange="renderLeads()" class="ims-select">
+              <option value="">All Courses</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Filter by Stage</label>
+            <select id="lead-filter-stage" onchange="renderLeads()" class="ims-select">
+              <option value="">All 10 Stages</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Filter by Source / Mode</label>
+            <select id="lead-filter-mode" onchange="renderLeads()" class="ims-select">
+              <option value="">All Modes (Online & Offline)</option>
+              <option value="Offline">Offline Classroom</option>
+              <option value="Online">Online Live</option>
+              <option value="Hybrid">Hybrid / Weekend</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Lead Subview 1: 10-Stage Kanban -->
+        <div id="lead-view-kanban" class="ims-kanban-board"></div>
+
+        <!-- Lead Subview 2: Searchable Table -->
+        <div id="lead-view-table" class="hidden ims-table-wrap">
+          <table class="ims-table">
+            <thead>
+              <tr>
+                <th>Lead ID & Name</th>
+                <th>Contact & Locality</th>
+                <th>Course & Mode</th>
+                <th>Stage & Intent</th>
+                <th>Follow-Up / Demo Date</th>
+                <th>Source & Staff</th>
+                <th>Objection / Notes</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="leads-table-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Lead Subview 3: Follow-up Alerts -->
+        <div id="lead-view-followups" class="hidden ims-card p-4 space-y-3">
+          <h3 class="text-sm font-extrabold">Overdue & Upcoming Lead Follow-Ups</h3>
+          <div id="lead-followups-container" class="space-y-2"></div>
+        </div>
+
+        <!-- Lead Subview 4: Dedicated WhatsApp Leads & Objection Solver Section -->
+        <div id="lead-view-wa-leads" class="hidden space-y-4">
+          <div class="ims-card p-4 space-y-3">
+            <h3 class="text-base font-extrabold">💬 WhatsApp Leads & Objection Handling Playbook</h3>
+            <p class="text-xs" style="color: var(--text-muted);">Select an active enquiry and any of the 23 lead-conversion scenarios (fees expensive, wants to consult family, seen but unanswered, comparing institutes, etc.) in English, Hindi, or Marathi.</p>
+            <div class="ims-grid-3">
+              <div>
+                <label class="ims-label">Select Lead Contact</label>
+                <select id="wa-lead-quick-select" onchange="renderWaLeadsPlaybook()" class="ims-select"></select>
+              </div>
+              <div>
+                <label class="ims-label">Filter Lead Scenario</label>
+                <select id="wa-lead-scenario-filter" onchange="renderWaLeadsPlaybook()" class="ims-select">
+                  <option value="">All 23 Lead Conversion Scenarios</option>
+                </select>
+              </div>
+              <div>
+                <label class="ims-label">Language & Tone</label>
+                <div class="flex gap-2">
+                  <select id="wa-lead-lang-select" onchange="renderWaLeadsPlaybook()" class="ims-select">
+                    <option value="en">English</option>
+                    <option value="hi">हिंदी (Hindi)</option>
+                    <option value="mr">मराठी (Marathi)</option>
+                  </select>
+                  <select id="wa-lead-tone-select" onchange="renderWaLeadsPlaybook()" class="ims-select">
+                    <option value="ALL">All Tones</option>
+                    <option value="Short">Short</option>
+                    <option value="Friendly">Friendly</option>
+                    <option value="Professional">Professional</option>
+                    <option value="Persuasive-but-Honest">Persuasive-but-Honest</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="wa-leads-playbook-grid" class="ims-grid-2"></div>
+        </div>
+
+        <!-- Lead Subview 5: Conversion Reports -->
+        <div id="lead-view-reports" class="hidden ims-card p-4 space-y-4">
+          <h3 class="text-base font-extrabold">Lead Conversion & Source Performance Analytics</h3>
+          <div id="lead-reports-container" class="ims-grid-2"></div>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 6: WHATSAPP COMMUNICATION CENTRE & 46-SCENARIO PRESET LIBRARY
+           ======================================================================== -->
+      <section id="view-whatsapp" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="wa_title">WhatsApp Click-to-Chat Studio & 46-Scenario Trilingual Library</h2>
+            <p class="text-xs" style="color: var(--text-muted);">100% Free Click-to-Chat workflow • English, Hindi & Marathi • Honest status tracking (Prepared → Chat Opened → Confirmed Sent)</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button onclick="openTemplateModal()" class="ims-btn ims-btn-primary ims-btn-sm">+ Create Custom Template</button>
+            <button onclick="switchTab('daily-updates')" class="ims-btn ims-btn-emerald ims-btn-sm">📣 Bulk / Daily Update Queue</button>
+          </div>
+        </div>
+
+        <!-- 7-Step Interactive Composer & Preview Studio -->
+        <div class="ims-grid-2">
+          <!-- Left: Contact & Template Selector -->
+          <div class="ims-card p-4 space-y-3">
+            <h3 class="text-sm font-extrabold">Step 1–3: Select Contact, Scenario & Auto-Populate</h3>
+            <div class="ims-grid-2">
+              <div>
+                <label class="ims-label">Recipient Type</label>
+                <select id="wa-studio-recipient-type" onchange="populateWaStudioContacts()" class="ims-select">
+                  <option value="student">🎓 Enrolled Student</option>
+                  <option value="lead">🎯 Lead / Prospect</option>
+                  <option value="custom">📱 Manual Phone Input</option>
+                </select>
+              </div>
+              <div>
+                <label class="ims-label">Select Contact</label>
+                <select id="wa-studio-contact-select" onchange="onWaStudioContactChange()" class="ims-select"></select>
+              </div>
+            </div>
+
+            <div class="ims-grid-2">
+              <div>
+                <label class="ims-label">WhatsApp Phone (with Country Code)</label>
+                <input type="text" id="wa-studio-phone" oninput="validateWaStudioPhone()" placeholder="+91 9823011223" class="ims-input font-mono-code" />
+                <div id="wa-phone-validation-msg" class="text-[11px] mt-1"></div>
+              </div>
+              <div>
+                <label class="ims-label">Template Language & Tone</label>
+                <div class="flex gap-1.5">
+                  <select id="wa-studio-lang" onchange="onWaStudioTemplateSelect()" class="ims-select">
+                    <option value="en">🇬🇧 English</option>
+                    <option value="hi">🇮🇳 हिंदी</option>
+                    <option value="mr">🚩 मराठी</option>
+                  </select>
+                  <select id="wa-studio-tone" onchange="populateWaStudioTemplates()" class="ims-select">
+                    <option value="ALL">All Tones</option>
+                    <option value="Professional">Professional</option>
+                    <option value="Friendly">Friendly</option>
+                    <option value="Short">Short</option>
+                    <option value="Persuasive-but-Honest">Persuasive-Honest</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="ims-grid-2">
+              <div>
+                <label class="ims-label">Template Category</label>
+                <select id="wa-studio-category" onchange="populateWaStudioTemplates()" class="ims-select">
+                  <option value="ALL">All Categories (46+ Scenarios)</option>
+                  <option value="Lead Conversion">🎯 Lead Conversion (23 Scenarios)</option>
+                  <option value="Student Communication">🎓 Student Communication (15 Scenarios)</option>
+                  <option value="Institute Announcement">📣 Institute Announcements (8 Scenarios)</option>
+                </select>
+              </div>
+              <div>
+                <label class="ims-label">Choose Saved Template</label>
+                <select id="wa-studio-template-select" onchange="onWaStudioTemplateSelect()" class="ims-select"></select>
+              </div>
+            </div>
+
+            <!-- Dynamic Placeholder Values Override -->
+            <div class="ims-subtle-box p-3 space-y-2">
+              <div class="text-xs font-extrabold flex items-center justify-between">
+                <span>Dynamic Placeholders (Real Record Data Only — Never Fabricated)</span>
+                <button onclick="applyWaStudioPlaceholders()" class="text-blue-600 underline text-[11px] cursor-pointer">Re-populate from Record</button>
+              </div>
+              <div class="ims-grid-3">
+                <input type="text" id="wa-ph-lecture-date" oninput="refreshWaStudioPreview()" placeholder="{{lecture_date}}" class="ims-input text-xs" />
+                <input type="text" id="wa-ph-lecture-time" oninput="refreshWaStudioPreview()" placeholder="{{lecture_time}}" class="ims-input text-xs" />
+                <input type="text" id="wa-ph-followup-date" oninput="refreshWaStudioPreview()" placeholder="{{follow_up_date}}" class="ims-input text-xs" />
+              </div>
+            </div>
+          </div>
+
+          
+            <!-- Step 3.5: Media & Document Attachment -->
+            <div class="space-y-2 pt-2 border-t" style="border-color: var(--border-subtle);">
+              <div class="flex items-center justify-between">
+                <label class="ims-label font-bold">Step 3.5: Attach Media / Document (Optional)</label>
+                <button type="button" onclick="switchTab('settings'); setMasterSettingsTab('media');" class="text-xs text-blue-600 hover:underline">Manage Library</button>
+              </div>
+              <select id="wa-studio-media-select" onchange="onWaStudioMediaSelect(this.value)" class="ims-input text-xs w-full">
+                <option value="">-- No Attached Media (Text Only) --</option>
+              </select>
+              <div id="wa-selected-media-badge" class="hidden p-2 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-300"></div>
+            </div>
+          </div>
+
+          <!-- Right: Live Preview, Edit, Dispatch & Status Verification -->
+          <div class="ims-card p-4 space-y-3 flex flex-col justify-between">
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-extrabold">Step 4–7: Preview, Edit & Open WhatsApp</h3>
+                <span id="wa-missing-vars-badge" class="ims-badge ims-badge-emerald">All placeholders filled</span>
+              </div>
+              <div class="space-y-1 mb-2">
+                <div class="flex items-center justify-between">
+                  <label class="ims-label mb-0">Variable Interpolators (Click to insert)</label>
+                  <span class="text-[10px] text-slate-400">Inserts at cursor</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-1.5 p-2 rounded-lg border bg-surface-subtle" style="border-color: var(--border-subtle);">
+                  <button type="button" onclick="insertVariableIntoWaEditor('{{student_name}}')" class="badge-pill badge-blue cursor-pointer hover:opacity-80">+ {{student_name}}</button>
+                  <button type="button" onclick="insertVariableIntoWaEditor('{{course_name}}')" class="badge-pill badge-cyan cursor-pointer hover:opacity-80">+ {{course_name}}</button>
+                  <button type="button" onclick="insertVariableIntoWaEditor('{{batch_code}}')" class="badge-pill badge-violet cursor-pointer hover:opacity-80">+ {{batch_code}}</button>
+                  <button type="button" onclick="insertVariableIntoWaEditor('{{pending_fee}}')" class="badge-pill badge-amber cursor-pointer hover:opacity-80">+ {{pending_fee}}</button>
+                  <button type="button" onclick="insertVariableIntoWaEditor('{{due_date}}')" class="badge-pill badge-crimson cursor-pointer hover:opacity-80">+ {{due_date}}</button>
+                  <button type="button" onclick="insertVariableIntoWaEditor('{{lecture_time}}')" class="badge-pill badge-emerald cursor-pointer hover:opacity-80">+ {{lecture_time}}</button>
+                  <button type="button" onclick="insertVariableIntoWaEditor('{{institute_name}}')" class="badge-pill badge-slate cursor-pointer hover:opacity-80">+ {{institute_name}}</button>
+                </div>
+              </div>
+              <label class="ims-label">Editable Message Text</label>
+              <textarea id="wa-studio-editor" rows="6" oninput="updateWaStudioLiveHighlight()" class="ims-textarea text-xs leading-relaxed"></textarea>
+              <div>
+                <label class="ims-label">Highlighted Preview (Missing values highlighted in amber)</label>
+                <div id="wa-studio-preview-box" class="ims-subtle-box p-3 text-xs whitespace-pre-wrap max-h-36 overflow-y-auto"></div>
+              </div>
+            </div>
+
+            <div class="space-y-2 pt-2 border-t" style="border-color: var(--border-subtle);">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex flex-wrap gap-1.5">
+                  <button onclick="saveWaStudioAction('Prepared')" class="ims-btn ims-btn-outline ims-btn-sm">📝 Save Draft (Prepared)</button>
+                  <button onclick="copyWaStudioMessage()" class="ims-btn ims-btn-outline ims-btn-sm">📋 Copy Message</button>
+                  <button onclick="openWaStudioChat()" class="ims-btn ims-btn-emerald ims-btn-sm">💬 Open WhatsApp Chat</button>
+                  <button onclick="saveWaStudioAction('Marked Sent')" class="ims-btn ims-btn-primary ims-btn-sm">✓ Confirm Manually Sent</button>
+                </div>
+              </div>
+              <p class="text-[11px]" style="color: var(--text-muted);">
+                ℹ️ <strong>Honest Status Disclosure:</strong> Free WhatsApp click-to-chat opens WhatsApp Web/App with your prefilled text. Delivery or read status is never fabricated; mark as Sent after pressing Send in WhatsApp.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Searchable & Editable Template Library + Message History Tabs -->
+        <div class="ims-card p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5">
+              <button onclick="setWaLibraryTab('presets')" id="wa-lib-tab-presets" class="sub-pill-btn active">📚 Template Library (<span id="wa-total-presets-count">0</span>)</button>
+              <button onclick="setWaLibraryTab('history')" id="wa-lib-tab-history" class="sub-pill-btn">🕒 Communication History (<span id="wa-total-history-count">0</span>)</button>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <input type="text" id="wa-lib-search" oninput="renderWaTemplateLibrary()" placeholder="Search 46+ scenarios, keywords..." class="ims-input" style="width: 220px;" />
+              <select id="wa-lib-cat-filter" onchange="renderWaTemplateLibrary()" class="ims-select" style="width: 190px;">
+                <option value="ALL">All Categories</option>
+                <option value="Lead Conversion">Lead Conversion</option>
+                <option value="Student Communication">Student Communication</option>
+                <option value="Institute Announcement">Institute Announcement</option>
+              </select>
+              <select id="wa-lib-lang-filter" onchange="renderWaTemplateLibrary()" class="ims-select" style="width: 130px;">
+                <option value="en">English</option>
+                <option value="hi">हिंदी</option>
+                <option value="mr">मराठी</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="wa-library-presets-container" class="ims-grid-2"></div>
+
+          <div id="wa-library-history-container" class="hidden ims-table-wrap">
+            <table class="ims-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Recipient</th>
+                  <th>Phone</th>
+                  <th>Template / Scenario</th>
+                  <th>Status (Prepared / Chat Opened / Sent)</th>
+                  <th>Message Preview</th>
+                  <th class="text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody id="wa-history-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 7: DAILY WHATSAPP UPDATE INTERFACE & RECIPIENT QUEUE
+           ======================================================================== -->
+      <section id="view-daily-updates" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="daily_title">Lecture Timetable, Conflict Detector & Daily Update Hub</h2>
+            <p class="text-xs" style="color: var(--text-muted);">Interactive Day/Week/Month lecture grids, automatic batch conflict detection & WhatsApp broadcast queues</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="flex items-center gap-1.5 p-1 bg-surface-subtle border rounded-lg" style="border-color: var(--border-subtle);">
+              <button type="button" onclick="setLectureViewMode('day')" id="lec-mode-day" class="sub-pill-btn active">Day</button>
+              <button type="button" onclick="setLectureViewMode('week')" id="lec-mode-week" class="sub-pill-btn">Week</button>
+              <button type="button" onclick="setLectureViewMode('month')" id="lec-mode-month" class="sub-pill-btn">Month</button>
+            </div>
+            <button type="button" onclick="openScheduleLectureModal()" class="btn-primary-glow text-xs py-1.5 px-3">+ Schedule Lecture</button>
+          </div>
+        </div>
+
+        <!-- Conflict Alert Banner (Dynamic) -->
+        <div id="lecture-conflict-banner" class="hidden conflict-alert"></div>
+
+        <!-- Dynamic Lecture Grid View -->
+        <div class="ims-card p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 id="lecture-grid-title" class="text-sm font-extrabold">📅 Master Lecture Schedule</h3>
+            <div class="flex items-center gap-2">
+              <span class="badge-pill badge-emerald">● Completed</span>
+              <span class="badge-pill badge-blue">● Scheduled</span>
+              <span class="badge-pill badge-amber">● Rescheduled</span>
+            </div>
+          </div>
+          <div id="lecture-calendar-container" class="calendar-grid calendar-grid-week"></div>
+        </div>
+
+        <div class="ims-grid-2">
+          <!-- Left: Daily Schedule & Queue Builder -->
+          <div class="ims-card p-4 space-y-3">
+            <h3 class="text-sm font-extrabold">1. Configure Daily Update & Select Recipients</h3>
+            <div class="ims-grid-2">
+              <div>
+                <label class="ims-label">Update Type / Scenario</label>
+                <select id="daily-update-type" onchange="onDailyUpdateTypeChange()" class="ims-select">
+                  <option value="stu_lecture_reminder">📅 Upcoming Lecture Reminder</option>
+                  <option value="ann_daily_update">📣 Daily Institute Update</option>
+                  <option value="stu_attendance_followup">⚠️ Today's Absentee Follow-Up</option>
+                  <option value="stu_lecture_postponed">⏳ Lecture Postponed / Revised Time</option>
+                  <option value="ann_holiday_reopen">🏖️ Holiday / Reopening Notice</option>
+                  <option value="custom">✏️ Custom Announcement</option>
+                </select>
+              </div>
+              <div>
+                <label class="ims-label">Language</label>
+                <select id="daily-update-lang" onchange="onDailyUpdateTypeChange()" class="ims-select">
+                  <option value="en">🇬🇧 English</option>
+                  <option value="hi">🇮🇳 हिंदी</option>
+                  <option value="mr">🚩 मराठी</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="ims-grid-2">
+              <div>
+                <label class="ims-label">Recipient Target Group</label>
+                <select id="daily-recipient-group" onchange="renderDailyRecipientPreviewCount()" class="ims-select">
+                  <option value="BATCH_SINGLE">Single Batch</option>
+                  <option value="BATCH_ALL">All Active Batches</option>
+                  <option value="ABSENT_TODAY">Absent Students on Selected Date</option>
+                  <option value="OVERDUE_FEES">Students with Overdue Fees</option>
+                  <option value="OVERDUE_LEADS">Leads Due for Follow-Up</option>
+                </select>
+              </div>
+              <div id="daily-batch-picker-wrap">
+                <label class="ims-label">Select Batch</label>
+                <select id="daily-batch-select" onchange="renderDailyRecipientPreviewCount()" class="ims-select"></select>
+              </div>
+            </div>
+
+            <div class="ims-grid-2">
+              <div>
+                <label class="ims-label">Lecture Time / Slot</label>
+                <input type="text" id="daily-lecture-time" value="08:00 AM - 10:00 AM" class="ims-input" />
+              </div>
+              <div>
+                <label class="ims-label">Topic / Daily Highlight</label>
+                <input type="text" id="daily-lecture-topic" value="Live Market Structure & Session Review" class="ims-input" />
+              </div>
+            </div>
+
+            <div>
+              <label class="ims-label">Template Message (Supports {{student_name}}, {{batch_name}}, {{course_name}}, {{lecture_date}}, {{lecture_time}})</label>
+              <textarea id="daily-template-text" rows="4" class="ims-textarea text-xs"></textarea>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-2">
+              <span id="daily-recipient-match-badge" class="ims-badge ims-badge-blue">0 recipients matched</span>
+              <button onclick="buildDailyRecipientQueue()" class="ims-btn ims-btn-primary">⚡ Review & Generate Personalized Queue</button>
+            </div>
+          </div>
+
+          <!-- Right: Prepared Recipient Queue & Daily History -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-extrabold">2. Recipient Preparation Queue (<span id="daily-queue-count">0</span>)</h3>
+                <p class="text-xs" style="color: var(--text-muted);">Review each personalized message before clicking Open WhatsApp</p>
+              </div>
+              <div class="flex gap-1.5">
+                <button onclick="clearCompletedDailyQueue()" class="ims-btn ims-btn-outline ims-btn-sm">Clear Sent</button>
+              </div>
+            </div>
+            <div id="daily-queue-list" class="space-y-2 max-h-[420px] overflow-y-auto"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 8: FEES, INSTALLMENTS & PRINTABLE RECEIPTS
+           ======================================================================== -->
+      <section id="view-fees" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="fee_title">Offline Fee Ledger, Installments & Printable A4 Tax Receipts</h2>
+            <p class="text-xs" style="color: var(--text-muted);">Clear distinction between Gross Course Fee, Discount, Net Charged, Received & Outstanding • Full audit trail on corrections</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <select id="fee-filter-status" onchange="renderFeeLedger()" class="ims-select" style="width: 190px;">
+              <option value="ALL">All Students</option>
+              <option value="OVERDUE">🚨 Has Overdue Installment</option>
+              <option value="PENDING">⏳ Has Pending Balance</option>
+              <option value="CLEARED">✅ 100% Fee Cleared</option>
+            </select>
+            <input type="text" id="fee-search-input" oninput="renderFeeLedger()" placeholder="Search student or receipt..." class="ims-input" style="width: 210px;" />
+            <button onclick="exportModuleCsv('fees')" class="ims-btn ims-btn-outline ims-btn-sm">⬇️ Export Fee Report CSV</button>
+          </div>
+        </div>
+
+        <!-- Fee Summary KPI Row -->
+        <div class="ims-grid-4" id="fee-kpi-summary"></div>
+
+        <!-- Fee Ledger Table -->
+        <div class="ims-table-wrap">
+          <table class="ims-table">
+            <thead>
+              <tr>
+                <th>Student & Batch</th>
+                <th>Gross Fee & Discount</th>
+                <th>Net Fee Charged</th>
+                <th>Amount Received</th>
+                <th>Outstanding Balance</th>
+                <th>Installment Milestones</th>
+                <th class="text-right">Record Payment / Receipt</th>
+              </tr>
+            </thead>
+            <tbody id="fees-table-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 9: COURSE COMPLETION CERTIFICATES
+           ======================================================================== -->
+      <section id="view-certificates" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="cert_title">Course Completion Certificates & Issuance Ledger</h2>
+            <p class="text-xs" style="color: var(--text-muted);">Unique Certificate IDs, duplicate issuance prevention, authorized corrections & A4 print/PDF output</p>
+          </div>
+        </div>
+
+        <div class="ims-grid-2">
+          <!-- Certificate Generator Controls & History -->
+          <div class="space-y-4">
+            <div class="ims-card p-4 space-y-3">
+              <h3 class="text-sm font-extrabold">Issue or Preview Certificate</h3>
+              <div class="ims-grid-2">
+                <div>
+                  <label class="ims-label">Select Enrolled Student</label>
+                  <select id="cert-student-select" onchange="onCertStudentChange()" class="ims-select"></select>
+                </div>
+                <div>
+                  <label class="ims-label">Course Name</label>
+                  <input type="text" id="cert-course-input" oninput="renderCertificateLivePreview()" class="ims-input" />
+                </div>
+              </div>
+              <div class="ims-grid-3">
+                <div>
+                  <label class="ims-label">Completion Date</label>
+                  <input type="date" id="cert-date-input" onchange="renderCertificateLivePreview()" class="ims-input" />
+                </div>
+                <div>
+                  <label class="ims-label">Unique Certificate ID</label>
+                  <input type="text" id="cert-id-input" oninput="renderCertificateLivePreview()" class="ims-input font-mono-code" />
+                </div>
+                <div>
+                  <label class="ims-label">Grade / DistinctionNote</label>
+                  <input type="text" id="cert-grade-input" value="Distinction (Verified)" oninput="renderCertificateLivePreview()" class="ims-input" />
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2 pt-2">
+                <button onclick="issueCertificateRecord()" class="ims-btn ims-btn-primary">🏆 Issue & Record Certificate</button>
+                <button onclick="printCurrentCertificate()" class="ims-btn ims-btn-emerald">🖨️ Print / Save as A4 PDF</button>
+              </div>
+            </div>
+
+            <div class="ims-card p-4 space-y-3">
+              <h3 class="text-sm font-extrabold">Certificate Issuance History</h3>
+              <div class="ims-table-wrap">
+                <table class="ims-table">
+                  <thead>
+                    <tr>
+                      <th>Cert ID</th>
+                      <th>Student</th>
+                      <th>Course</th>
+                      <th>Issued Date</th>
+                      <th class="text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cert-history-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live A4 Certificate Preview -->
+          <div class="ims-card p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-extrabold">Live A4 Printable Certificate Preview</h3>
+              <span class="ims-badge ims-badge-violet">A4 Portrait Ready</span>
+            </div>
+            <div id="cert-live-preview-box" class="overflow-x-auto"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 10: STAFF MANAGEMENT & STUDENT PORTAL PREVIEW
+           ======================================================================== -->
+      <section id="view-portal-staff" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold" data-i18n="portal_staff_title">Optional Staff Management & Student Self-Service Portal</h2>
+            <p class="text-xs" style="color: var(--text-muted);">Local role-scoped staff directory & exportable read-only student portal snapshot (never exposes manager's full database)</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="setPortalStaffSubView('portal')" id="ps-sub-portal" class="sub-pill-btn active">🎓 Student Portal Preview</button>
+            <button onclick="setPortalStaffSubView('staff')" id="ps-sub-staff" class="sub-pill-btn">👥 Staff Directory & Roles</button>
+            <button onclick="setPortalStaffSubView('materials')" id="ps-sub-materials" class="sub-pill-btn">📖 Study Materials</button>
+          </div>
+        </div>
+
+        <!-- Student Portal Preview Subview -->
+        <div id="ps-view-portal" class="space-y-4">
+          <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="text-xs font-extrabold">Preview Portal as Student:</label>
+              <select id="portal-student-select" onchange="renderStudentPortalPreview()" class="ims-select" style="width: 280px;"></select>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button onclick="exportStandaloneStudentPortalHtml()" class="ims-btn ims-btn-primary ims-btn-sm">⬇️ Export Read-Only Student Portal Card (.html)</button>
+              <button onclick="printStudentPortalSummary()" class="ims-btn ims-btn-outline ims-btn-sm">🖨️ Print Student Dossier</button>
+            </div>
+          </div>
+          <div id="student-portal-preview-container"></div>
+        </div>
+
+        <!-- Staff Management Subview -->
+        <div id="ps-view-staff" class="hidden space-y-4">
+          <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-extrabold">Institute Staff Profiles, Batch Assignments & Active Operator</h3>
+              <p class="text-xs" style="color: var(--text-muted);">Select active operator for audit logging or add counselors/instructors</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="text-xs font-bold">Active Local Actor:</label>
+              <select id="active-actor-select" onchange="changeActiveActor(this.value)" class="ims-select" style="width: 220px;"></select>
+              <button onclick="openStaffModal()" class="ims-btn ims-btn-primary ims-btn-sm">+ Add Staff Member</button>
+            </div>
+          </div>
+          <div class="ims-table-wrap">
+            <table class="ims-table">
+              <thead>
+                <tr>
+                  <th>Staff ID & Name</th>
+                  <th>Role & Access Scope</th>
+                  <th>Phone & Email</th>
+                  <th>Assigned Batches</th>
+                  <th>Assigned Leads</th>
+                  <th>Status</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="staff-table-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Study Materials Subview -->
+        <div id="ps-view-materials" class="hidden space-y-4">
+          <div class="ims-card p-4 flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-extrabold">Course Study Materials & Handouts Reference Library</h3>
+              <p class="text-xs" style="color: var(--text-muted);">Visible in the Student Portal for matching courses/batches</p>
+            </div>
+            <button onclick="openMaterialModal()" class="ims-btn ims-btn-primary ims-btn-sm">+ Add Study Material</button>
+          </div>
+          <div id="materials-grid-container" class="ims-grid-3"></div>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 11: AI ASSISTANT CENTER (MODE A OFFLINE + MODE B ONLINE)
+           ======================================================================== -->
+      <section id="view-ai-center" class="tab-view hidden space-y-4">
+        <div class="ims-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-extrabold">Dual-Mode AI Assistant (Mode A: 100% Offline • Mode B: Configurable Online API)</h2>
+            <p class="text-xs" style="color: var(--text-muted);">Deterministic local natural-language queries over real IndexedDB data + Device WebGPU/Local LLM runtime inspector + Optional Online AI connector</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="ai-active-mode-badge" class="ims-badge ims-badge-emerald">Mode A: Offline Deterministic Engine Active</span>
+          </div>
+        </div>
+
+        <div class="ims-grid-2">
+          <!-- Left: Full Interactive AI Chat & Natural Language Command Console -->
+          <div class="ims-card p-4 flex flex-col justify-between space-y-3" style="min-height: 520px;">
+            <div class="space-y-2">
+              <h3 class="text-sm font-extrabold">Operational Query & Command Console</h3>
+              <div class="flex flex-wrap gap-1.5">
+                <button onclick="runAiAssistantQuery('Daily operational summary')" class="ims-btn ims-btn-outline ims-btn-sm">📋 Daily Summary</button>
+                <button onclick="runAiAssistantQuery('Find absent students today')" class="ims-btn ims-btn-outline ims-btn-sm">🚨 Absent Today</button>
+                <button onclick="runAiAssistantQuery('Students without batch assignment')" class="ims-btn ims-btn-outline ims-btn-sm">⚠️ Unassigned Students</button>
+                <button onclick="runAiAssistantQuery('Calculate batch statistics and attendance %')" class="ims-btn ims-btn-outline ims-btn-sm">📊 Batch Attendance</button>
+                <button onclick="runAiAssistantQuery('Overdue lead follow-ups')" class="ims-btn ims-btn-outline ims-btn-sm">🎯 Overdue Follow-ups</button>
+                <button onclick="runAiAssistantQuery('Pending fees report')" class="ims-btn ims-btn-outline ims-btn-sm">💳 Pending Fees</button>
+                <button onclick="runAiAssistantQuery('Explain dashboard statistics')" class="ims-btn ims-btn-outline ims-btn-sm">📈 Explain Dashboard</button>
+                <button onclick="runAiAssistantQuery('Draft fee reminder message in Marathi')" class="ims-btn ims-btn-outline ims-btn-sm">💬 Draft Marathi WA</button>
+              </div>
+            </div>
+
+            <div id="ai-center-chat-log" class="ims-subtle-box p-3 flex-1 overflow-y-auto space-y-3 max-h-[340px]"></div>
+
+            <div>
+              <div id="ai-center-autocomplete" class="bot-autocomplete-wrap space-y-1.5">
+                <div class="flex items-center justify-between text-[11px]">
+                  <span class="font-extrabold" style="color: var(--accent-primary);">✨ Smart Word Predictor & Sentence Autocomplete (Press Tab or Click):</span>
+                  <span class="font-mono-code text-[10px]" style="color: var(--text-muted);">Tab = Complete • ↑↓ = Cycle</span>
+                </div>
+                <div id="ai-center-pred-chips" class="flex flex-wrap gap-1"></div>
+              </div>
+              <form onsubmit="handleAiCenterSubmit(event)" class="flex gap-2">
+                <input type="text" id="ai-center-input" autocomplete="off" oninput="handleBotPredictiveInput(this, 'center')" onkeydown="handleBotInputKeydown(event, this, 'center')" placeholder="Type incomplete word or command: e.g. 'edit stu...', 'edit lead...', 'show charts', 'split fee Omkar'..." class="ims-input flex-1" />
+                <button type="submit" class="ims-btn ims-btn-primary">Execute</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Right: Mode A Local Runtime Inspector & Mode B Online Provider Configuration -->
+          <div class="space-y-4">
+            <!-- Mode A Hardware & Local LLM Inspector -->
+            <div class="ims-card p-4 space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-extrabold">Mode A: Local Hardware & Inference Runtime Inspector</h3>
+                <button onclick="inspectDeviceAiCapabilities()" class="ims-btn ims-btn-outline ims-btn-sm">🔍 Re-Scan Device</button>
+              </div>
+              <div id="device-ai-capabilities-box" class="ims-subtle-box p-3 text-xs space-y-1.5"></div>
+              <div class="ims-grid-2">
+                <div>
+                  <label class="ims-label">Optional Local Ollama Endpoint (100% Free Local Host)</label>
+                  <input type="text" id="ai-local-ollama-url" value="http://localhost:11434/api/generate" class="ims-input font-mono-code text-xs" />
+                </div>
+                <div>
+                  <label class="ims-label">Local Model Tag (Requires Explicit User Setup)</label>
+                  <input type="text" id="ai-local-model-name" value="llama3.2:1b" class="ims-input font-mono-code text-xs" />
+                </div>
+              </div>
+              <p class="text-[11px]" style="color: var(--text-muted);">
+                🔒 <strong>Zero Silent Downloads Policy:</strong> This app never downloads multi-hundred-MB LLM weights silently. Deterministic local tools work immediately with 0 MB extra download; optional Ollama/WebGPU connects only when you explicitly enable it.
+              </p>
+            </div>
+
+            <!-- Mode B Online AI Configuration -->
+            <div class="ims-card p-4 space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-extrabold">Mode B: Optional Online AI Provider (BYO API Key)</h3>
+                <label class="inline-flex items-center gap-1.5 text-xs font-bold cursor-pointer">
+                  <input type="checkbox" id="ai-online-enabled-cb" onchange="toggleOnlineAiMode(this.checked)" />
+                  <span>Enable Online AI</span>
+                </label>
+              </div>
+              <div class="ims-grid-2">
+                <div>
+                  <label class="ims-label">Provider Endpoint</label>
+                  <select id="ai-online-provider" class="ims-select text-xs">
+                    <option value="gemini">Google Gemini REST API (generativelanguage.googleapis.com)</option>
+                    <option value="openai">OpenAI-Compatible Chat Completions Endpoint</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="ims-label">Model Identifier</label>
+                  <input type="text" id="ai-online-model" value="gemini-2.5-flash" class="ims-input font-mono-code text-xs" />
+                </div>
+              </div>
+              <div>
+                <label class="ims-label">API Key (Stored in session memory only — never hardcoded in source code)</label>
+                <input type="password" id="ai-online-api-key" placeholder="Paste API key for current session..." class="ims-input font-mono-code text-xs" />
+              </div>
+              <p class="text-[11px]" style="color: var(--text-muted);">
+                ⚠️ <strong>API Billing & Privacy Notice:</strong> Consumer ChatGPT Plus or Gemini Advanced subscriptions do not include API usage credits. Online AI requires internet connectivity and sends only the summary context needed for your query.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======================================================================
+             EXECUTIVE OPERATIONAL INTELLIGENCE & TABULAR REPORTS (PHASE 4)
+             ====================================================================== -->
+        <div class="ims-card p-5 space-y-5">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-4" style="border-color: var(--border-subtle);">
+            <div>
+              <h3 class="text-base font-extrabold">📊 Executive Intelligence & Official Reports Hub</h3>
+              <p class="text-xs text-slate-400">One-click RFC4180 CSV exports, print-ready PDF summaries, and real SVG analytic charts</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" onclick="exportExecutiveReport('students')" class="ims-btn ims-btn-outline ims-btn-sm">📥 Students Master CSV</button>
+              <button type="button" onclick="exportExecutiveReport('fees')" class="ims-btn ims-btn-outline ims-btn-sm">📥 Fee Ledger CSV</button>
+              <button type="button" onclick="exportExecutiveReport('attendance')" class="ims-btn ims-btn-outline ims-btn-sm">📥 Attendance CSV</button>
+              <button type="button" onclick="exportExecutiveReport('leads')" class="ims-btn ims-btn-outline ims-btn-sm">📥 Leads Pipeline CSV</button>
+            </div>
+          </div>
+
+          <!-- 3 Real SVG Analytic Charts -->
+          <div class="ims-grid-3 gap-4">
+            <!-- Chart 1: Fee Collection vs Balance -->
+            <div class="luxury-card p-4 space-y-3">
+              <div class="flex items-center justify-between text-xs font-bold text-slate-400">
+                <span>FEE COLLECTION BREAKDOWN</span>
+                <span class="text-emerald-500">💳</span>
+              </div>
+              <div id="chart-fee-donut" class="h-44 flex items-center justify-center"></div>
+              <div class="flex justify-around text-[11px] text-slate-400">
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Collected</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500"></span> Pending</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-rose-500"></span> Overdue</span>
+              </div>
+            </div>
+
+            <!-- Chart 2: Lead CRM Funnel -->
+            <div class="luxury-card p-4 space-y-3">
+              <div class="flex items-center justify-between text-xs font-bold text-slate-400">
+                <span>CRM ADMISSION FUNNEL</span>
+                <span class="text-violet-500">🎯</span>
+              </div>
+              <div id="chart-lead-funnel" class="h-44 flex items-center justify-center"></div>
+              <div class="text-[11px] text-slate-400 text-center">Pipeline Velocity: Real Inquiries to Admissions</div>
+            </div>
+
+            <!-- Chart 3: Batch Attendance Rate -->
+            <div class="luxury-card p-4 space-y-3">
+              <div class="flex items-center justify-between text-xs font-bold text-slate-400">
+                <span>BATCH ATTENDANCE COMPLIANCE</span>
+                <span class="text-blue-500">⏱️</span>
+              </div>
+              <div id="chart-attendance-bars" class="h-44 flex items-center justify-center"></div>
+              <div class="text-[11px] text-slate-400 text-center">Overall Student Regularity across Active Batches</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================================================
+           VIEW 12: GOOGLE SHEETS SYNC, BACKUP, MULTILINGUAL & AUDIT HISTORY
+           ======================================================================== -->
+            <!-- MASTER UPGRADE: 12-PILLAR MASTER SETTINGS & CONTROL CENTRE -->
+      <section id="view-settings" class="tab-view hidden space-y-5">
+        <div class="luxury-card p-5 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-xl font-extrabold" data-i18n="settings_title">Master Settings & Control Centre</h2>
+              <span class="ims-badge ims-badge-blue">v5.0 Sovereign</span>
+              <span id="settings-storage-badge" class="ims-badge ims-badge-emerald">Offline-First IndexedDB</span>
+            </div>
+            <p class="text-xs" style="color: var(--text-muted);">Centralized institute administration — profile & multi-branch branding, 4 luxury themes, student ID patterns, fee installment rules, attendance policies, media library, cloud database and Google integrations.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="downloadFullBackupJson()" class="ims-btn ims-btn-primary ims-btn-sm">💾 1-Click Backup</button>
+            <button onclick="triggerGoogleSheetsSync()" class="ims-btn ims-btn-emerald ims-btn-sm">☁️ Sync Now</button>
+          </div>
+        </div>
+
+        <div class="settings-layout-grid">
+          <!-- Left: 12-Pillar Navigation Sidebar -->
+          <div class="luxury-card p-3 space-y-1">
+            <div class="px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-400">Settings Modules</div>
+            <button onclick="setMasterSettingsTab('general')" id="set-btn-general" class="settings-nav-item active">
+              <span>🏛️</span> <span>1. Institute Profile & Branches</span>
+            </button>
+            <button onclick="setMasterSettingsTab('appearance')" id="set-btn-appearance" class="settings-nav-item">
+              <span>🎨</span> <span>2. Luxury Themes & Layout</span>
+            </button>
+            <button onclick="setMasterSettingsTab('students')" id="set-btn-students" class="settings-nav-item">
+              <span>🎓</span> <span>3. Student ID & Admissions</span>
+            </button>
+            <button onclick="setMasterSettingsTab('courses')" id="set-btn-courses" class="settings-nav-item">
+              <span>📚</span> <span>4. Courses & Batches</span>
+            </button>
+            <button onclick="setMasterSettingsTab('fees')" id="set-btn-fees" class="settings-nav-item">
+              <span>💳</span> <span>5. Fee Rules & Receipts</span>
+            </button>
+            <button onclick="setMasterSettingsTab('attendance')" id="set-btn-attendance" class="settings-nav-item">
+              <span>⏱️</span> <span>6. Attendance Policies</span>
+            </button>
+            <button onclick="setMasterSettingsTab('whatsapp')" id="set-btn-whatsapp" class="settings-nav-item">
+              <span>💬</span> <span>7. WhatsApp & Signatures</span>
+            </button>
+            <button onclick="setMasterSettingsTab('media')" id="set-btn-media" class="settings-nav-item">
+              <span>📁</span> <span>8. Media & Document Library</span>
+            </button>
+            <button onclick="setMasterSettingsTab('notifications')" id="set-btn-notifications" class="settings-nav-item">
+              <span>🔔</span> <span>9. Reminders & Alerts</span>
+            </button>
+            <button onclick="setMasterSettingsTab('storage')" id="set-btn-storage" class="settings-nav-item">
+              <span>🗄️</span> <span>10. Offline DB & Cloud Connector</span>
+            </button>
+            <button onclick="setMasterSettingsTab('google')" id="set-btn-google" class="settings-nav-item">
+              <span>🌐</span> <span>11. Google Integrations Hub</span>
+            </button>
+            <button onclick="setMasterSettingsTab('security')" id="set-btn-security" class="settings-nav-item">
+              <span>🛡️</span> <span>12. Security, Audit & Backups</span>
+            </button>
+          </div>
+
+          <!-- Right: Active Pillar Content Panels -->
+          <div id="settings-pillar-container" class="space-y-4">
+            
+            <!-- 1. GENERAL & INSTITUTE PROFILE -->
+            <div id="set-panel-general" class="settings-panel space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div>
+                    <h3 class="text-base font-extrabold">Institute Identity & Multi-Branch Profile</h3>
+                    <p class="text-xs text-slate-500">Edit core branding details. Updates automatically reflect across headers, certificates, receipts, and WhatsApp signatures.</p>
+                  </div>
+                  <button onclick="saveInstituteSettings(event)" class="ims-btn ims-btn-primary ims-btn-sm">Save Profile Changes</button>
+                </div>
+
+                <div class="ims-grid-2">
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Institute Legal / Trade Name</label>
+                    <input type="text" id="set-inst-name" class="ims-input w-full text-xs" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Official Tagline</label>
+                    <input type="text" id="set-inst-tagline" placeholder="e.g. Premier Capital Markets Academy" class="ims-input w-full text-xs" />
+                  </div>
+                </div>
+
+                <div>
+                  <label class="block text-xs font-bold mb-1">Institute Overview / Description</label>
+                  <textarea id="set-inst-desc" rows="2" class="ims-input w-full text-xs" placeholder="Brief description used in prospectus & intro messages"></textarea>
+                </div>
+
+                <!-- Logos & Signatures Management -->
+                <div class="ims-grid-3 pt-2">
+                  <div class="p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <span class="text-xs font-bold block">1. Primary Logo (White / Light)</span>
+                    <div id="preview-logo-light" class="h-20 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden p-2"></div>
+                    <div class="flex items-center gap-1.5">
+                      <label class="ims-btn ims-btn-secondary ims-btn-sm text-xs cursor-pointer flex-1 text-center">
+                        Upload Logo
+                        <input type="file" accept="image/*" class="hidden" onchange="handleLogoUpload(event, 'logoLightBase64')" />
+                      </label>
+                      <button onclick="removeLogo('logoLightBase64')" class="ims-btn ims-btn-secondary ims-btn-sm text-xs text-rose-500" title="Remove Logo">&times;</button>
+                    </div>
+                  </div>
+
+                  <div class="p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <span class="text-xs font-bold block">2. Dark Theme Logo (Optional)</span>
+                    <div id="preview-logo-dark" class="h-20 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center overflow-hidden p-2"></div>
+                    <div class="flex items-center gap-1.5">
+                      <label class="ims-btn ims-btn-secondary ims-btn-sm text-xs cursor-pointer flex-1 text-center">
+                        Upload Dark Logo
+                        <input type="file" accept="image/*" class="hidden" onchange="handleLogoUpload(event, 'logoDarkBase64')" />
+                      </label>
+                      <button onclick="removeLogo('logoDarkBase64')" class="ims-btn ims-btn-secondary ims-btn-sm text-xs text-rose-500" title="Remove Dark Logo">&times;</button>
+                    </div>
+                  </div>
+
+                  <div class="p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <span class="text-xs font-bold block">3. Authorized Signature</span>
+                    <div id="preview-signature" class="h-20 rounded-lg bg-white border border-slate-200 flex items-center justify-center overflow-hidden p-2"></div>
+                    <div class="flex items-center gap-1.5">
+                      <label class="ims-btn ims-btn-secondary ims-btn-sm text-xs cursor-pointer flex-1 text-center">
+                        Upload Signature
+                        <input type="file" accept="image/*" class="hidden" onchange="handleLogoUpload(event, 'signatureBase64')" />
+                      </label>
+                      <button onclick="removeLogo('signatureBase64')" class="ims-btn ims-btn-secondary ims-btn-sm text-xs text-rose-500" title="Remove Signature">&times;</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Multi-Branch Manager -->
+                <div class="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500">Campuses & Branch Locations</h4>
+                      <p class="text-xs text-slate-400">Multiple branch addresses supported with designated Primary Campus</p>
+                    </div>
+                    <button type="button" onclick="openBranchModal()" class="ims-btn ims-btn-primary ims-btn-sm">+ Add Campus Branch</button>
+                  </div>
+                  <div id="branch-list-table-container"></div>
+                </div>
+
+                <!-- Contact & Social Channels -->
+                <div class="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                  <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500">Official Communication & Social Channels</h4>
+                  <div class="ims-grid-3">
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Central Phone</label>
+                      <input type="text" id="set-inst-phone" class="ims-input w-full text-xs" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Official Email</label>
+                      <input type="email" id="set-inst-email" class="ims-input w-full text-xs" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Official Website</label>
+                      <input type="url" id="set-inst-website" class="ims-input w-full text-xs" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">WhatsApp Channel / Link</label>
+                      <input type="text" id="set-inst-wa-channel" class="ims-input w-full text-xs" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">YouTube Channel URL</label>
+                      <input type="url" id="set-inst-youtube" class="ims-input w-full text-xs" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Instagram Handle / URL</label>
+                      <input type="text" id="set-inst-instagram" class="ims-input w-full text-xs" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Google Business Profile / Maps Link</label>
+                      <input type="url" id="set-inst-gmaps" class="ims-input w-full text-xs" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">GSTIN (Optional)</label>
+                      <input type="text" id="set-inst-gstin" class="ims-input w-full text-xs font-mono-code" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Default UPI ID (for QR receipts)</label>
+                      <input type="text" id="set-inst-upi" class="ims-input w-full text-xs font-mono-code" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Signatory Info -->
+                <div class="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                  <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500">Signatory & Authority (for Certificates & Receipts)</h4>
+                  <div class="ims-grid-2">
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Authorized Signatory Name</label>
+                      <input type="text" id="set-inst-signatory" class="ims-input w-full text-xs" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Signatory Title / Designation</label>
+                      <input type="text" id="set-inst-designation" class="ims-input w-full text-xs" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="flex justify-end pt-2">
+                  <button onclick="saveInstituteSettings(event)" class="ims-btn ims-btn-primary ims-btn-md">✓ Save All Profile & Branding Settings</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. APPEARANCE & THEMES -->
+            <div id="set-panel-appearance" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200">
+                  <h3 class="text-base font-extrabold text-slate-900">✨ Sovereign Executive Display & High-Contrast Visual System</h3>
+                  <p class="text-xs text-slate-600">The application is permanently tuned to the single best <strong>Royal Executive High-Contrast Theme</strong> for optimal readability, razor-sharp typography, and zero eye fatigue.</p>
+                </div>
+
+                <div class="p-4 rounded-xl border border-blue-200 bg-blue-50/60 space-y-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-sm font-extrabold text-blue-900 flex items-center gap-2">
+                      <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
+                      Default Active Theme: Royal Executive High-Contrast
+                    </span>
+                    <span class="ims-badge ims-badge-emerald font-bold">100% Contrast Optimized</span>
+                  </div>
+                  <p class="text-xs text-blue-800 leading-relaxed">
+                    Theme selection has been unified into a single definitive standard. Backgrounds, cards, tables, text elements, and badges use dynamic contrasting colors calibrated for maximum legibility across all desktop and mobile displays.
+                  </p>
+                </div>
+
+                <!-- Interface Density & Language Preferences -->
+                <div class="ims-grid-2 pt-3 border-t border-slate-200">
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Interface Density</label>
+                    <select id="set-app-density" onchange="setInterfaceDensity(this.value)" class="ims-input w-full text-xs">
+                      <option value="comfortable">Comfortable (Luxury Whitespace & Padding — Default)</option>
+                      <option value="compact">Compact (Higher Data Density for Financial Desks)</option>
+                      <option value="spacious">Spacious Mode (Generous Whitespace & Larger Tap Targets)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Interface Language</label>
+                    <select id="set-app-language" onchange="changeAppLanguage(this.value)" class="ims-input w-full text-xs">
+                      <option value="en">English (Official Operations)</option>
+                      <option value="hi">हिन्दी (Hindi)</option>
+                      <option value="mr">मराठी (Marathi)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. STUDENT SETTINGS -->
+            <div id="set-panel-students" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <h3 class="text-base font-extrabold">Student ID & Admission Formatting</h3>
+                  <p class="text-xs text-slate-500">Configure auto-generated student identifiers and validation rules.</p>
+                </div>
+                <div class="ims-grid-3">
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Student ID Prefix</label>
+                    <input type="text" id="set-stu-id-prefix" value="SSMI-" class="ims-input w-full text-xs font-mono-code" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Include Current Year Token</label>
+                    <select id="set-stu-year-token" class="ims-input w-full text-xs">
+                      <option value="true">Yes (e.g. SSMI-2026-001)</option>
+                      <option value="false">No (e.g. SSMI-001)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Number Padding Length</label>
+                    <input type="number" id="set-stu-id-padding" value="3" min="2" max="6" class="ims-input w-full text-xs font-mono-code" />
+                  </div>
+                </div>
+                <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs">
+                  <strong>Live Preview:</strong> Next Student Registration ID will format as: <code id="stu-id-preview-box" class="font-bold text-blue-600 font-mono-code">SSMI-2026-008</code>
+                </div>
+                <div class="flex justify-end pt-2">
+                  <button onclick="saveStudentConfig(event)" class="ims-btn ims-btn-primary ims-btn-sm">Save Student Settings</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. COURSES & BATCHES -->
+            <div id="set-panel-courses" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div>
+                    <h3 class="text-base font-extrabold">Course Curriculum & Batch Timings</h3>
+                    <p class="text-xs text-slate-500">Manage standard institute courses, pricing structures and instructors.</p>
+                  </div>
+                  <button onclick="openCourseModal()" class="ims-btn ims-btn-primary ims-btn-sm">+ Add New Course</button>
+                </div>
+                <div id="settings-courses-table-container"></div>
+              </div>
+            </div>
+
+            <!-- 5. FEE & RECEIPT SETTINGS -->
+            <div id="set-panel-fees" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <h3 class="text-base font-extrabold">Fee Milestone Structures & Tax Receipt Settings</h3>
+                  <p class="text-xs text-slate-500">Configure default installment schedules and printable A4 receipt formatting.</p>
+                </div>
+                <div class="ims-grid-3">
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Receipt Number Prefix</label>
+                    <input type="text" id="set-fee-receipt-prefix" value="REC-2026-" class="ims-input w-full text-xs font-mono-code" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">GST / Tax Invoice Mode</label>
+                    <select id="set-fee-gst-mode" class="ims-input w-full text-xs">
+                      <option value="exempt">GST Exempt / Unregistered</option>
+                      <option value="18">18% GST (CGST 9% + SGST 9%)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Default Milestone Template</label>
+                    <select id="set-fee-default-template" class="ims-input w-full text-xs">
+                      <option value="3-stage">3-Stage (Token, Module 2, Final)</option>
+                      <option value="2-stage">2-Stage (50% Admission, 50% Mid-Course)</option>
+                      <option value="1-shot">Full Single-Shot Payment</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-xs font-bold mb-1">Printable Receipt Terms & Conditions Footer</label>
+                  <textarea id="set-fee-receipt-notes" rows="2" class="ims-input w-full text-xs"></textarea>
+                </div>
+                <div class="flex justify-end pt-2">
+                  <button onclick="saveFeeConfig(event)" class="ims-btn ims-btn-primary ims-btn-sm">Save Fee & Receipt Configuration</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 6. ATTENDANCE POLICIES -->
+            <div id="set-panel-attendance" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <h3 class="text-base font-extrabold">Attendance Rules & Threshold Alerts</h3>
+                  <p class="text-xs text-slate-500">Configure low-attendance alert triggers and calculation policies.</p>
+                </div>
+                <div class="ims-grid-2">
+                  <div class="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                    <input type="checkbox" id="set-att-exclude-excused" class="cursor-pointer w-4 h-4" />
+                    <div>
+                      <label for="set-att-exclude-excused" class="text-xs font-bold block cursor-pointer">Exclude 'Excused Leave' from Total Sessions</label>
+                      <span class="text-xs text-slate-500">When enabled, authorized medical or personal leaves do not penalize student's attendance percentage.</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Low Attendance Alert Threshold (%)</label>
+                    <input type="number" id="set-att-threshold" value="75" min="50" max="95" class="ims-input w-full text-xs" />
+                  </div>
+                </div>
+                <div class="flex justify-end pt-2">
+                  <button onclick="saveAttendanceConfig(event)" class="ims-btn ims-btn-primary ims-btn-sm">Save Attendance Policies</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 7. WHATSAPP & SIGNATURES -->
+            <div id="set-panel-whatsapp" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <h3 class="text-base font-extrabold">WhatsApp Communication & Signature Presets</h3>
+                  <p class="text-xs text-slate-500">Configure signatures appended to click-to-chat messages and default sending country codes.</p>
+                </div>
+                <div class="ims-grid-2">
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Default Country Code</label>
+                    <input type="text" id="set-wa-country-code" value="+91" class="ims-input w-full text-xs font-mono-code" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Default Message Tone</label>
+                    <select id="set-wa-default-tone" class="ims-input w-full text-xs">
+                      <option value="Professional">Professional</option>
+                      <option value="Friendly">Friendly</option>
+                      <option value="Persuasive-but-Honest">Persuasive-but-Honest</option>
+                      <option value="Short">Short & Direct</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-xs font-bold mb-1">Automatic WhatsApp Message Signature</label>
+                  <textarea id="set-wa-signature" rows="3" class="ims-input w-full text-xs font-mono-code" placeholder="— Srujaan Share Market Institute"></textarea>
+                </div>
+                <div class="flex justify-end pt-2">
+                  <button onclick="saveWhatsAppConfig(event)" class="ims-btn ims-btn-primary ims-btn-sm">Save WhatsApp Settings</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 8. MEDIA & DOCUMENT LIBRARY -->
+            <div id="set-panel-media" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div>
+                    <h3 class="text-base font-extrabold">Institute Media & Document Library</h3>
+                    <p class="text-xs text-slate-500">Upload brochures, posters, syllabi, fee schedules and flyers. Used for 1-click WhatsApp media sharing.</p>
+                  </div>
+                  <label class="ims-btn ims-btn-primary ims-btn-sm cursor-pointer">
+                    + Upload New Media / Document
+                    <input type="file" id="media-library-file-input" onchange="handleMediaUpload(event)" class="hidden" accept="image/*,.pdf,.doc,.docx" />
+                  </label>
+                </div>
+
+                <!-- Filter & Search Bar -->
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex items-center gap-1.5 overflow-x-auto">
+                    <button onclick="filterMediaLibrary('ALL')" id="media-filter-all" class="sub-pill-btn active">All Files</button>
+                    <button onclick="filterMediaLibrary('Brochure')" id="media-filter-brochure" class="sub-pill-btn">Brochures</button>
+                    <button onclick="filterMediaLibrary('Poster')" id="media-filter-poster" class="sub-pill-btn">Posters & Flyers</button>
+                    <button onclick="filterMediaLibrary('Syllabus')" id="media-filter-syllabus" class="sub-pill-btn">Syllabi</button>
+                    <button onclick="filterMediaLibrary('Admission')" id="media-filter-admission" class="sub-pill-btn">Admission Forms</button>
+                  </div>
+                  <input type="text" id="media-search-input" oninput="renderMediaLibrary()" placeholder="Search media files..." class="ims-input text-xs" style="width: 220px;" />
+                </div>
+
+                <div id="media-library-grid" class="ims-grid-4 pt-2"></div>
+              </div>
+            </div>
+
+            <!-- 9. NOTIFICATION & REMINDER RULES -->
+            <div id="set-panel-notifications" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <h3 class="text-base font-extrabold">Operational Reminders & Ticker Thresholds</h3>
+                  <p class="text-xs text-slate-500">Configure notice windows for fee installments, demo follow-ups, and backup warnings.</p>
+                </div>
+                <div class="ims-grid-3">
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Fee Due Notice (Days in Advance)</label>
+                    <input type="number" id="set-notif-fee-days" value="3" min="1" max="15" class="ims-input w-full text-xs" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Backup Reminder Interval (Days)</label>
+                    <input type="number" id="set-notif-backup-days" value="7" min="1" max="30" class="ims-input w-full text-xs" />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Today's Lecture Alert Banner</label>
+                    <select id="set-notif-lecture-banner" class="ims-input w-full text-xs">
+                      <option value="true">Show on Dashboard</option>
+                      <option value="false">Hide</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="flex justify-end pt-2">
+                  <button onclick="saveNotificationConfig(event)" class="ims-btn ims-btn-primary ims-btn-sm">Save Reminder Settings</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 10. OFFLINE DB & CLOUD CONNECTOR (FIREBASE / SUPABASE) -->
+            <div id="set-panel-storage" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-base font-extrabold">Database Engine & Optional Cloud Synchronization</h3>
+                    <span id="cloud-connection-pill" class="ims-badge ims-badge-neutral">Local Store Active</span>
+                  </div>
+                  <p class="text-xs text-slate-500">Local IndexedDB is the permanent primary source of truth. Optional cloud databases provide remote backups and multi-device access without requiring cloud connectivity to open or operate the app.</p>
+                </div>
+
+                <!-- Provider Selector -->
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                  <label class="block text-xs font-bold">Select Active Storage Architecture</label>
+                  <select id="set-cloud-provider" onchange="onCloudProviderChanged(this.value)" class="ims-input w-full text-xs">
+                    <option value="local">Primary: Local Browser IndexedDB Only (100% Offline-First — Recommended)</option>
+                    <option value="firebase">Optional: Firebase / Cloud Firestore (Google Cloud Free Tier)</option>
+                    <option value="supabase">Optional: Supabase / PostgreSQL (Free Tier)</option>
+                  </select>
+
+                  <!-- Firebase Config Inputs -->
+                  <div id="provider-config-firebase" class="hidden space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div class="ims-grid-3">
+                      <div>
+                        <label class="block text-xs font-bold mb-1">Firebase Project ID</label>
+                        <input type="text" id="fb-project-id" placeholder="e.g. srujaan-ims-prod" class="ims-input w-full text-xs font-mono-code" />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-bold mb-1">Public Web API Key</label>
+                        <input type="text" id="fb-api-key" placeholder="AIzaSy..." class="ims-input w-full text-xs font-mono-code" />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-bold mb-1">App ID</label>
+                        <input type="text" id="fb-app-id" placeholder="1:12345:web:abcd" class="ims-input w-full text-xs font-mono-code" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Supabase Config Inputs -->
+                  <div id="provider-config-supabase" class="hidden space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div class="ims-grid-2">
+                      <div>
+                        <label class="block text-xs font-bold mb-1">Supabase Project URL</label>
+                        <input type="url" id="sb-project-url" placeholder="https://xyz.supabase.co" class="ims-input w-full text-xs font-mono-code" />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-bold mb-1">Anon / Public Key</label>
+                        <input type="text" id="sb-anon-key" placeholder="eyJhbGciOi..." class="ims-input w-full text-xs font-mono-code" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2 pt-2">
+                    <button type="button" onclick="testCloudDbConnection()" class="ims-btn ims-btn-primary ims-btn-sm">🔌 Test Connection</button>
+                    <button type="button" onclick="saveCloudDbConfig()" class="ims-btn ims-btn-emerald ims-btn-sm">Save Connection Settings</button>
+                    <button type="button" onclick="disconnectCloudDb()" class="ims-btn ims-btn-secondary ims-btn-sm text-rose-500">Disconnect Cloud</button>
+                  </div>
+                </div>
+
+                <!-- Storage Quota & Sync Queue Table -->
+                <div class="space-y-3 pt-2">
+                  <div id="storage-quota-box" class="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs flex justify-between items-center"></div>
+
+                  <div class="flex items-center justify-between">
+                    <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500">Pending Sync Queue (<span id="sync-btn-queue-count">0</span> items)</h4>
+                    <button onclick="triggerGoogleSheetsSync()" class="ims-btn ims-btn-primary ims-btn-sm">🚀 Push Pending Queue Now</button>
+                  </div>
+
+                  <div class="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                    <table class="ims-table w-full">
+                      <thead>
+                        <tr><th>Timestamp</th><th>Module</th><th>Operation</th><th>Summary</th><th>Status</th></tr>
+                      </thead>
+                      <tbody id="sync-queue-tbody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 11. GOOGLE INTEGRATIONS CENTRE -->
+            <div id="set-panel-google" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-base font-extrabold">Official Google Integrations Centre</h3>
+                    <span id="gsheets-conn-badge" class="ims-badge ims-badge-neutral">Local-First Mode</span>
+                  </div>
+                  <p class="text-xs text-slate-500">Live integration with Google Sheets (reporting & sync), Google Forms (lead responses ingestion), and Google Drive (encrypted cloud backups).</p>
+                </div>
+
+                <!-- Google OAuth GIS Client ID -->
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                  <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500">Google Cloud OAuth 2.0 Web Client Configuration</h4>
+                  <div class="ims-grid-2">
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Google OAuth Client ID</label>
+                      <input type="text" id="gsheets-client-id" placeholder="123456789-abc.apps.googleusercontent.com" class="ims-input w-full text-xs font-mono-code" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Target Google Spreadsheet ID</label>
+                      <input type="text" id="gsheets-sheet-id" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms" class="ims-input w-full text-xs font-mono-code" />
+                    </div>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2 pt-1">
+                    <button onclick="connectGoogleSheetsAccount()" class="ims-btn ims-btn-primary ims-btn-sm">Connect Google Account</button>
+                    <button onclick="createNewGoogleSpreadsheet()" class="ims-btn ims-btn-secondary ims-btn-sm">+ Create Target Sheet</button>
+                    <button onclick="disconnectGoogleSheets()" class="ims-btn ims-btn-secondary ims-btn-sm text-rose-500">Disconnect</button>
+                  </div>
+                </div>
+
+                <!-- Google Forms Lead Response Intake -->
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500">Google Forms Lead Intake Linker</h4>
+                      <p class="text-xs text-slate-500">Auto-imports inquiry submissions from your Google Form's linked response sheet.</p>
+                    </div>
+                    <button onclick="importGoogleFormsResponses()" class="ims-btn ims-btn-emerald ims-btn-sm">📥 Fetch New Form Leads</button>
+                  </div>
+                  <div class="ims-grid-2">
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Forms Response Sheet ID or Tab Name</label>
+                      <input type="text" id="gforms-sheet-tab" placeholder="e.g. Form Responses 1" class="ims-input w-full text-xs font-mono-code" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">Auto-Deduplicate by Phone</label>
+                      <select id="gforms-dedup-select" class="ims-input w-full text-xs">
+                        <option value="true">Enabled (Append note if phone already exists)</option>
+                        <option value="false">Create separate inquiry record</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Google Drive Cloud Backups -->
+                <div class="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500">Google Drive Cloud Backup Hub</h4>
+                      <p class="text-xs text-slate-500">Upload automated, timestamped JSON database backups directly to your Google Drive.</p>
+                    </div>
+                    <div class="flex gap-2">
+                      <button onclick="backupToGoogleDrive()" class="ims-btn ims-btn-primary ims-btn-sm">☁️ 1-Click Backup to Drive</button>
+                      <button onclick="restoreFromGoogleDrive()" class="ims-btn ims-btn-secondary ims-btn-sm">Restore from Drive</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 12. SECURITY, AUDIT & BACKUPS -->
+            <div id="set-panel-security" class="settings-panel hidden space-y-4">
+              <div class="luxury-card p-5 space-y-4">
+                <div class="pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <h3 class="text-base font-extrabold">System Audit Trail, Verified Backups & Integrity</h3>
+                  <p class="text-xs text-slate-500">Audit logs of all administrative actions, verified full JSON export/import and offline CSV tools.</p>
+                </div>
+
+                <!-- Backup & Restore Actions -->
+                <div class="ims-grid-3">
+                  <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <span class="text-xs font-extrabold block">Full JSON Database Backup</span>
+                    <p class="text-xs text-slate-500">Complete, verified snapshot of all students, fees, leads and attendance.</p>
+                    <button onclick="downloadFullBackupJson()" class="ims-btn ims-btn-primary ims-btn-sm w-full">⬇️ Download Backup JSON</button>
+                  </div>
+                  <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <span class="text-xs font-extrabold block">Restore from Backup File</span>
+                    <p class="text-xs text-slate-500">Restore or merge previous JSON database backup.</p>
+                    <label class="ims-btn ims-btn-secondary ims-btn-sm w-full cursor-pointer text-center block">
+                      📂 Select Backup File
+                      <input type="file" accept=".json" onchange="handleBackupRestoreFile(event)" class="hidden" />
+                    </label>
+                  </div>
+                  <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <span class="text-xs font-extrabold block">5-Tab Master Excel (.xlsx)</span>
+                    <p class="text-xs text-slate-500">Export Students, Leads, Attendance & Fees into an Excel workbook.</p>
+                    <button onclick="exportMasterExcel()" class="ims-btn ims-btn-emerald ims-btn-sm w-full">📊 Export Master Excel</button>
+                  </div>
+                </div>
+
+                <!-- Audit History -->
+                <div class="space-y-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h4 class="text-xs font-extrabold uppercase tracking-wider text-slate-500">Administrative Audit Trail</h4>
+                    <div class="flex gap-2">
+                      <select id="audit-category-filter" onchange="renderAuditHistory()" class="ims-input text-xs" style="width: 150px;">
+                        <option value="ALL">All Categories</option>
+                        <option value="Students">Students</option>
+                        <option value="Leads">Leads</option>
+                        <option value="Attendance">Attendance</option>
+                        <option value="Fees">Fees & Receipts</option>
+                        <option value="Backup/Sync">Backup/Sync</option>
+                        <option value="Branding">Branding</option>
+                      </select>
+                      <input type="text" id="audit-search-input" oninput="renderAuditHistory()" placeholder="Filter logs..." class="ims-input text-xs" style="width: 180px;" />
+                    </div>
+                  </div>
+                  <div class="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 max-h-[300px]">
+                    <table class="ims-table w-full">
+                      <thead>
+                        <tr><th>Timestamp</th><th>Category</th><th>Action</th><th>Record ID</th><th>Actor</th><th>Details</th></tr>
+                      </thead>
+                      <tbody id="audit-history-tbody"></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- Dangerous Zone -->
+                <div class="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <strong class="text-xs text-rose-700 dark:text-rose-400">Factory Dataset Reset</strong>
+                    <p class="text-xs text-rose-600/80 dark:text-rose-400/80">Restores default 7 students, 10 leads, 4 batches, 5 courses, and 46 trilingual presets.</p>
+                  </div>
+                  <button onclick="confirmResetToConsolidatedSeed()" class="ims-btn ims-btn-secondary text-rose-600 border-rose-300 text-xs">Reset to Factory Data</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+
+    </main>
+  </div>
+
+  <!-- FLOATING OMNI-CONNECTED CHATBOT LAUNCHER PILL (PERSISTENT ACROSS ALL TABS) -->
+  <button id="omni-bot-fab" onclick="toggleAiDrawer(true)" class="omni-bot-fab no-print" title="Open Omni-Connected Institute Chatbot (Ctrl+K)">
+    <span>🤖</span>
+    <span>Omni-Bot Hub</span>
+    <span class="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-950/50 font-mono-code">Ctrl+K</span>
+  </button>
+
+  <!-- ==========================================================================
+       FLOATING OMNI-CONNECTED CHATBOT DRAWER (CONNECTED TO ALL 12 MODULES)
+       ========================================================================== -->
+  <div id="ai-drawer" class="hidden fixed inset-0 z-50 flex justify-end" style="background: rgba(15, 23, 42, 0.62);">
+    <div class="w-full max-w-xl h-full flex flex-col justify-between p-4 shadow-2xl" style="background: var(--bg-surface); color: var(--text-primary); border-left: 1.5px solid var(--border-color);">
+      <div class="flex items-center justify-between pb-3 border-b" style="border-color: var(--border-subtle);">
+        <div>
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-extrabold">🤖 Srujaan Omni-Connected Master Bot</h3>
+            <span class="ims-badge ims-badge-emerald">All 12 Modules Linked</span>
+          </div>
+          <p class="text-[11px]" style="color: var(--text-muted);">Search, add records, mark attendance, send WhatsApp, print receipts/certificates & control everything</p>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button onclick="toggleAiDrawer(false); switchTab('ai-center')" class="ims-btn ims-btn-outline ims-btn-sm">Full View</button>
+          <button onclick="toggleAiDrawer(false)" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+        </div>
+      </div>
+
+      <!-- Omni-Module Quick Action Chips -->
+      <div class="py-2 flex flex-wrap gap-1 border-b" style="border-color: var(--border-subtle);">
+        <button onclick="runAiAssistantQuery('Master control panel', true)" class="ims-btn ims-btn-primary ims-btn-sm">⚡ All Modules Hub</button>
+        <button onclick="runAiAssistantQuery('Daily operational summary', true)" class="ims-btn ims-btn-outline ims-btn-sm">📊 Daily Brief</button>
+        <button onclick="runAiAssistantQuery('Manage students', true)" class="ims-btn ims-btn-outline ims-btn-sm">🎓 Students</button>
+        <button onclick="runAiAssistantQuery('Manage batches and unassigned', true)" class="ims-btn ims-btn-outline ims-btn-sm">🏫 Batches</button>
+        <button onclick="runAiAssistantQuery('Absent students today', true)" class="ims-btn ims-btn-outline ims-btn-sm">✅ Attendance</button>
+        <button onclick="runAiAssistantQuery('Overdue follow-ups and leads', true)" class="ims-btn ims-btn-outline ims-btn-sm">🎯 Leads CRM</button>
+        <button onclick="runAiAssistantQuery('Pending fees and receipts', true)" class="ims-btn ims-btn-outline ims-btn-sm">💳 Fees & Receipts</button>
+        <button onclick="runAiAssistantQuery('Issue certificates', true)" class="ims-btn ims-btn-outline ims-btn-sm">🏆 Certificates</button>
+        <button onclick="runAiAssistantQuery('Draft Marathi WhatsApp', true)" class="ims-btn ims-btn-outline ims-btn-sm">💬 WhatsApp</button>
+        <button onclick="runAiAssistantQuery('Sync backup and export', true)" class="ims-btn ims-btn-outline ims-btn-sm">☁️ Sync & Export</button>
+      </div>
+
+      <div id="ai-drawer-chat-log" class="flex-1 overflow-y-auto py-3 space-y-2.5"></div>
+
+      <div class="pt-2 border-t" style="border-color: var(--border-subtle);">
+        <div id="ai-drawer-autocomplete" class="bot-autocomplete-wrap space-y-1">
+          <div class="flex items-center justify-between text-[10px]">
+            <span class="font-extrabold" style="color: var(--accent-primary);">✨ Predictive Word & Sentence Completion (Press Tab or Click):</span>
+            <span class="font-mono-code" style="color: var(--text-muted);">Tab ↹</span>
+          </div>
+          <div id="ai-drawer-pred-chips" class="flex flex-wrap gap-1"></div>
+        </div>
+        <form onsubmit="handleAiDrawerSubmit(event)" class="flex gap-2">
+          <input type="text" id="ai-drawer-input" autocomplete="off" oninput="handleBotPredictiveInput(this, 'drawer')" onkeydown="handleBotInputKeydown(event, this, 'drawer')" placeholder="Type partial word/sentence: 'edit stu...', 'edit lead...', 'charts', 'pay fee Omkar'..." class="ims-input flex-1" />
+          <button type="submit" class="ims-btn ims-btn-primary">Execute</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 1: ADD / EDIT STUDENT MODAL (SINGLE-SCREEN COMPREHENSIVE)
+       ========================================================================== -->
+  <div id="student-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-3xl">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 id="student-modal-title" class="text-base font-extrabold">Student Admission & Profile</h3>
+        <button onclick="closeModal('student-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <form onsubmit="saveStudentRecord(event)" class="p-4 overflow-y-auto space-y-3">
+        <input type="hidden" id="stu-form-id" />
+        <div id="stu-duplicate-warning" class="hidden p-2.5 rounded-lg bg-amber-50 border border-amber-400 text-amber-900 text-xs font-bold"></div>
+        <div class="ims-grid-3">
+          <div>
+            <label class="ims-label">Student ID (Auto)</label>
+            <input type="text" id="stu-form-regid" required class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Full Name *</label>
+            <input type="text" id="stu-form-name" required oninput="checkStudentDuplicateLive()" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Enrollment Status</label>
+            <select id="stu-form-status" class="ims-select">
+              <option value="Active">Active</option>
+              <option value="On Hold">On Hold</option>
+              <option value="Completed">Completed</option>
+              <option value="Archived">Archived</option>
+              <option value="Dropped">Dropped</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Primary Phone *</label>
+            <input type="text" id="stu-form-phone" required oninput="checkStudentDuplicateLive()" placeholder="9823011223" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">WhatsApp Number *</label>
+            <input type="text" id="stu-form-whatsapp" required placeholder="+919823011223" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Email Address</label>
+            <input type="email" id="stu-form-email" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Course *</label>
+            <select id="stu-form-course" onchange="onStuCourseSelectChange()" class="ims-select"></select>
+          </div>
+          <div>
+            <label class="ims-label">Assigned Batch</label>
+            <select id="stu-form-batch" class="ims-select"></select>
+          </div>
+          <div>
+            <label class="ims-label">Lead Source</label>
+            <select id="stu-form-source" class="ims-select">
+              <option value="Walk-in Counseling">Walk-in Counseling</option>
+              <option value="WhatsApp Enquiry">WhatsApp Enquiry</option>
+              <option value="Student Referral">Student Referral</option>
+              <option value="Instagram / Meta">Instagram / Meta</option>
+              <option value="Google Search / Maps">Google Search / Maps</option>
+              <option value="Demo Seminar">Demo Seminar</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Enrollment Date</label>
+            <input type="date" id="stu-form-enrolldate" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Batch Joining Date</label>
+            <input type="date" id="stu-form-joindate" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Locality / Address</label>
+            <input type="text" id="stu-form-address" placeholder="Kothrud, Pune" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Course Fee (₹)</label>
+            <input type="number" id="stu-form-grossfee" oninput="recalcStuModalNetFee()" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Agreed Discount (₹)</label>
+            <input type="number" id="stu-form-discount" value="0" oninput="recalcStuModalNetFee()" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Net Payable Fee (₹)</label>
+            <input type="number" id="stu-form-netfee" readonly class="ims-input font-mono-code font-bold" />
+          </div>
+        </div>
+        <div class="ims-grid-2">
+          <div>
+            <label class="ims-label">Document References (ID Proof, Form #)</label>
+            <input type="text" id="stu-form-docs" placeholder="Aadhaar Verified, Admission Form #204" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Counselor / Academic Notes</label>
+            <input type="text" id="stu-form-notes" placeholder="Any special learning goals or installment notes..." class="ims-input" />
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-3 border-t" style="border-color: var(--border-subtle);">
+          <button type="button" onclick="closeModal('student-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary">💾 Save Student Record</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 2: STUDENT 360° PROFILE, HISTORY & LEGACY ARCHIVE DRAWER/MODAL
+       ========================================================================== -->
+  <div id="student-360-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-4xl">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 id="stu-360-title" class="text-base font-extrabold">Student 360° Dossier</h3>
+        <button onclick="closeModal('student-360-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <div id="stu-360-body" class="p-4 overflow-y-auto space-y-4"></div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 3: CREATE / EDIT BATCH MODAL & BATCH ROSTER MODAL
+       ========================================================================== -->
+  <div id="batch-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-2xl">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 id="batch-modal-title" class="text-base font-extrabold">Configure Batch</h3>
+        <button onclick="closeModal('batch-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <form onsubmit="saveBatchRecord(event)" class="p-4 overflow-y-auto space-y-3">
+        <input type="hidden" id="batch-form-editing-code" />
+        <div class="ims-grid-2">
+          <div>
+            <label class="ims-label">Batch Code / ID *</label>
+            <input type="text" id="batch-form-code" required placeholder="OCT-MTB-01" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Batch Name *</label>
+            <input type="text" id="batch-form-name" required placeholder="Morning Institutional Batch" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Course *</label>
+            <select id="batch-form-course" required class="ims-select"></select>
+          </div>
+          <div>
+            <label class="ims-label">Learning Mode *</label>
+            <select id="batch-form-mode" class="ims-select">
+              <option value="Offline Classroom">Offline Classroom</option>
+              <option value="Online Live">Online Live</option>
+              <option value="Hybrid">Hybrid (Classroom + Live)</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Instructor Name *</label>
+            <input type="text" id="batch-form-instructor" required placeholder="Vikramaditya Srujaan" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Lecture Schedule / Timings *</label>
+            <input type="text" id="batch-form-schedule" required placeholder="Mon-Fri • 8:00 AM - 10:00 AM" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Start Date</label>
+            <input type="date" id="batch-form-startdate" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">End Date</label>
+            <input type="date" id="batch-form-enddate" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Max Student Capacity</label>
+            <input type="number" id="batch-form-capacity" value="30" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Batch Status</label>
+            <select id="batch-form-status" class="ims-select">
+              <option value="Active">Active</option>
+              <option value="Upcoming">Upcoming</option>
+              <option value="Completed">Completed</option>
+              <option value="Archived">Archived</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-3 border-t" style="border-color: var(--border-subtle);">
+          <button type="button" onclick="closeModal('batch-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary">💾 Save Batch</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- BATCH ROSTER & STUDENT TRANSFER MODAL -->
+  <div id="batch-roster-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-3xl">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 id="batch-roster-title" class="text-base font-extrabold">Batch Roster & Student Transfers</h3>
+        <button onclick="closeModal('batch-roster-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <div id="batch-roster-body" class="p-4 overflow-y-auto space-y-4"></div>
+    </div>
+  </div>
+
+  <!-- COURSE MODAL -->
+  <div id="course-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-xl">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 class="text-base font-extrabold">Add / Edit Course</h3>
+        <button onclick="closeModal('course-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <form onsubmit="saveCourseRecord(event)" class="p-4 space-y-3">
+        <input type="hidden" id="course-form-id" />
+        <div class="ims-grid-2">
+          <div>
+            <label class="ims-label">Course Name *</label>
+            <input type="text" id="course-form-name" required class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Standard Fee (₹) *</label>
+            <input type="number" id="course-form-fee" required class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Duration *</label>
+            <input type="text" id="course-form-duration" required placeholder="8 Weeks (40 Hours)" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Default Mode</label>
+            <select id="course-form-mode" class="ims-select">
+              <option value="Offline & Online">Offline & Online</option>
+              <option value="Offline Classroom">Offline Classroom</option>
+              <option value="Online Live">Online Live</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Lead Instructor</label>
+            <input type="text" id="course-form-instructor" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Key Syllabus Topics</label>
+            <input type="text" id="course-form-syllabus" class="ims-input" />
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('course-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary">💾 Save Course</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- SCHEDULE LECTURE MODAL -->
+  <div id="lecture-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-lg">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 class="text-base font-extrabold">Schedule Batch Lecture Session</h3>
+        <button onclick="closeModal('lecture-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <form onsubmit="saveLectureSession(event)" class="p-4 space-y-3">
+        <div>
+          <label class="ims-label">Select Batch *</label>
+          <select id="lec-form-batch" required class="ims-select"></select>
+        </div>
+        <div class="ims-grid-2">
+          <div>
+            <label class="ims-label">Lecture Date *</label>
+            <input type="date" id="lec-form-date" required class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Time Slot *</label>
+            <input type="text" id="lec-form-time" required value="08:00 AM - 10:00 AM" class="ims-input" />
+          </div>
+        </div>
+        <div>
+          <label class="ims-label">Lecture Topic *</label>
+          <input type="text" id="lec-form-topic" required placeholder="Institutional Price Action & Risk Controls" class="ims-input" />
+        </div>
+        <div>
+          <label class="ims-label">Instructor</label>
+          <input type="text" id="lec-form-instructor" placeholder="Vikramaditya Srujaan" class="ims-input" />
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('lecture-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary">📅 Save Lecture</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 4: ADD / EDIT LEAD CRM MODAL
+       ========================================================================== -->
+  <div id="lead-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-2xl">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 id="lead-modal-title" class="text-base font-extrabold">Lead / Enquiry Record</h3>
+        <button onclick="closeModal('lead-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <form onsubmit="saveLeadRecord(event)" class="p-4 overflow-y-auto space-y-3">
+        <input type="hidden" id="lead-form-id" />
+        <div id="lead-duplicate-warning" class="hidden p-2.5 rounded-lg bg-amber-50 border border-amber-400 text-amber-900 text-xs font-bold"></div>
+        <div class="ims-grid-3">
+          <div>
+            <label class="ims-label">Prospect Name *</label>
+            <input type="text" id="lead-form-name" required oninput="checkLeadDuplicateLive()" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Phone / WhatsApp *</label>
+            <input type="text" id="lead-form-phone" required oninput="checkLeadDuplicateLive()" placeholder="9822011445" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Email</label>
+            <input type="email" id="lead-form-email" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Course Interest *</label>
+            <select id="lead-form-course" class="ims-select"></select>
+          </div>
+          <div>
+            <label class="ims-label">Pipeline Stage *</label>
+            <select id="lead-form-stage" class="ims-select"></select>
+          </div>
+          <div>
+            <label class="ims-label">Intent Priority</label>
+            <select id="lead-form-intent" class="ims-select">
+              <option value="Hot">Hot 🔥</option>
+              <option value="Warm">Warm ⏳</option>
+              <option value="Cold">Cold ❄️</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Enquiry Date</label>
+            <input type="date" id="lead-form-enquirydate" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Follow-Up / Demo Date</label>
+            <input type="date" id="lead-form-followupdate" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Follow-Up / Demo Time</label>
+            <input type="time" id="lead-form-followuptime" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Lead Source</label>
+            <select id="lead-form-source" class="ims-select">
+              <option value="Walk-in">Walk-in</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Instagram / Meta Ads">Instagram / Meta Ads</option>
+              <option value="Google Search / Maps">Google Search / Maps</option>
+              <option value="Student Referral">Student Referral</option>
+              <option value="Demo Workshop">Demo Workshop</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Preferred Mode</label>
+            <select id="lead-form-mode" class="ims-select">
+              <option value="Offline">Offline Classroom</option>
+              <option value="Online">Online Live</option>
+              <option value="Hybrid">Hybrid / Weekend</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Assigned Staff Counselor</label>
+            <select id="lead-form-staff" class="ims-select"></select>
+          </div>
+        </div>
+        <div class="ims-grid-2">
+          <div>
+            <label class="ims-label">Locality / Area</label>
+            <input type="text" id="lead-form-locality" placeholder="Kothrud, Pune" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Primary Objection / Question</label>
+            <input type="text" id="lead-form-objection" placeholder="e.g. Wants installment plan / Needs weekend batch" class="ims-input" />
+          </div>
+        </div>
+        <div>
+          <label class="ims-label">Counseling Notes</label>
+          <textarea id="lead-form-notes" rows="2" class="ims-textarea"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--border-subtle);">
+          <button type="button" onclick="closeModal('lead-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary">💾 Save Lead</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 5: FEE MILESTONES, PAYMENT RECORDING & CORRECTION MODAL
+       ========================================================================== -->
+  <div id="fee-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-4xl">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 id="fee-modal-title" class="text-base font-extrabold">Student Fee Ledger, Installments & Audit Corrections</h3>
+        <button onclick="closeModal('fee-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <div class="p-4 overflow-y-auto space-y-4">
+        <input type="hidden" id="fee-modal-student-id" />
+        <div class="ims-grid-4">
+          <div>
+            <label class="ims-label">Gross Course Fee (₹)</label>
+            <input type="number" id="fee-modal-gross" oninput="recalcFeeModalSummary()" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Agreed Discount (₹)</label>
+            <input type="number" id="fee-modal-discount" oninput="recalcFeeModalSummary()" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Net Payable Fee (₹)</label>
+            <input type="number" id="fee-modal-net" readonly class="ims-input font-mono-code font-bold" />
+          </div>
+          <div>
+            <label class="ims-label">Audit Reason (For Fee Corrections)</label>
+            <input type="text" id="fee-modal-audit-reason" placeholder="e.g. Scholarship discount approved" class="ims-input text-xs" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <h4 class="text-xs font-extrabold uppercase">Installment Milestones & Payment Records</h4>
+          <button type="button" onclick="addFeeMilestoneRow()" class="ims-btn ims-btn-outline ims-btn-sm">+ Add Installment Row</button>
+        </div>
+
+        <div class="ims-table-wrap">
+          <table class="ims-table">
+            <thead>
+              <tr>
+                <th>Installment / Milestone Name</th>
+                <th>Amount (₹)</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Payment Date</th>
+                <th>Method</th>
+                <th>Ref / UTR #</th>
+                <th>Remove</th>
+              </tr>
+            </thead>
+            <tbody id="fee-modal-milestones-tbody"></tbody>
+          </table>
+        </div>
+
+        <div id="fee-modal-totals-bar" class="ims-subtle-box p-3 flex flex-wrap items-center justify-between text-xs font-bold"></div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--border-subtle);">
+          <button type="button" onclick="closeModal('fee-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="button" onclick="saveFeeModalConfiguration(false)" class="ims-btn ims-btn-primary">💾 Save Fee Ledger</button>
+          <button type="button" onclick="saveFeeModalConfiguration(true)" class="ims-btn ims-btn-emerald">🖨️ Save & Print A4 Receipt</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 6: CREATE / EDIT WHATSAPP TEMPLATE MODAL
+       ========================================================================== -->
+  <div id="template-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-2xl">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 id="template-modal-title" class="text-base font-extrabold">Create / Edit WhatsApp Message Preset</h3>
+        <button onclick="closeModal('template-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <form onsubmit="saveTemplateRecord(event)" class="p-4 overflow-y-auto space-y-3">
+        <input type="hidden" id="tpl-form-id" />
+        <div class="ims-grid-3">
+          <div>
+            <label class="ims-label">Category *</label>
+            <select id="tpl-form-category" class="ims-select">
+              <option value="Lead Conversion">Lead Conversion</option>
+              <option value="Student Communication">Student Communication</option>
+              <option value="Institute Announcement">Institute Announcement</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Scenario Key / Label *</label>
+            <input type="text" id="tpl-form-scenario" required placeholder="e.g. Demo Invitation" class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Tone Variation</label>
+            <select id="tpl-form-tone" class="ims-select">
+              <option value="Professional">Professional</option>
+              <option value="Friendly">Friendly</option>
+              <option value="Short">Short</option>
+              <option value="Persuasive-but-Honest">Persuasive-but-Honest</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="ims-label">Template Title *</label>
+          <input type="text" id="tpl-form-title" required class="ims-input" />
+        </div>
+        <div class="text-[11px]" style="color: var(--text-muted);">
+          Supported Placeholders: <code>{{student_name}}</code>, <code>{{lead_name}}</code>, <code>{{course_name}}</code>, <code>{{batch_name}}</code>, <code>{{lecture_date}}</code>, <code>{{lecture_time}}</code>, <code>{{institute_name}}</code>, <code>{{instructor_name}}</code>, <code>{{fees}}</code>, <code>{{follow_up_date}}</code>
+        </div>
+        <div>
+          <label class="ims-label">🇬🇧 English Message Text *</label>
+          <textarea id="tpl-form-en" rows="3" required class="ims-textarea text-xs"></textarea>
+        </div>
+        <div>
+          <label class="ims-label">🇮🇳 हिंदी (Hindi) Message Text</label>
+          <textarea id="tpl-form-hi" rows="3" class="ims-textarea text-xs"></textarea>
+        </div>
+        <div>
+          <label class="ims-label">🚩 मराठी (Marathi) Message Text</label>
+          <textarea id="tpl-form-mr" rows="3" class="ims-textarea text-xs"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('template-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary">💾 Save Preset</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       MODAL 7: STAFF & STUDY MATERIAL MODALS + GENERIC CONFIRM MODAL
+       ========================================================================== -->
+  <div id="staff-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-lg">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 class="text-base font-extrabold">Add / Edit Staff Member</h3>
+        <button onclick="closeModal('staff-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <form onsubmit="saveStaffRecord(event)" class="p-4 space-y-3">
+        <input type="hidden" id="staff-form-id" />
+        <div class="ims-grid-2">
+          <div>
+            <label class="ims-label">Full Name *</label>
+            <input type="text" id="staff-form-name" required class="ims-input" />
+          </div>
+          <div>
+            <label class="ims-label">Role & Responsibility *</label>
+            <select id="staff-form-role" class="ims-select">
+              <option value="Chief Mentor & Admin">Chief Mentor & Admin</option>
+              <option value="Academic Instructor">Academic Instructor</option>
+              <option value="Admissions Counselor">Admissions Counselor</option>
+              <option value="Accounts & Operations">Accounts & Operations</option>
+            </select>
+          </div>
+          <div>
+            <label class="ims-label">Phone</label>
+            <input type="text" id="staff-form-phone" class="ims-input font-mono-code" />
+          </div>
+          <div>
+            <label class="ims-label">Email</label>
+            <input type="email" id="staff-form-email" class="ims-input" />
+          </div>
+        </div>
+        <div>
+          <label class="ims-label">Assigned Batches (Comma-separated codes)</label>
+          <input type="text" id="staff-form-batches" placeholder="OCT-MTB-01, OCT-FO-01" class="ims-input font-mono-code" />
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('staff-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary">💾 Save Staff</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="material-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-lg">
+      <div class="p-4 border-b flex items-center justify-between" style="border-color: var(--border-subtle);">
+        <h3 class="text-base font-extrabold">Add Course Study Material</h3>
+        <button onclick="closeModal('material-modal')" class="ims-btn ims-btn-ghost ims-btn-sm">✕</button>
+      </div>
+      <form onsubmit="saveMaterialRecord(event)" class="p-4 space-y-3">
+        <div>
+          <label class="ims-label">Material Title *</label>
+          <input type="text" id="mat-form-title" required placeholder="Module 1: Institutional Market Structure Workbook" class="ims-input" />
+        </div>
+        <div class="ims-grid-2">
+          <div>
+            <label class="ims-label">Course</label>
+            <select id="mat-form-course" class="ims-select"></select>
+          </div>
+          <div>
+            <label class="ims-label">Material Type</label>
+            <select id="mat-form-type" class="ims-select">
+              <option value="PDF Guide / Workbook">PDF Guide / Workbook</option>
+              <option value="Lecture Checklist">Lecture Checklist</option>
+              <option value="Practice Assignment">Practice Assignment</option>
+              <option value="Reference Sheet">Reference Sheet</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="ims-label">Summary / Key Notes for Students</label>
+          <textarea id="mat-form-summary" rows="3" required class="ims-textarea text-xs"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('material-modal')" class="ims-btn ims-btn-outline">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary">💾 Save Material</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- CONFIRMATION MODAL -->
+  <div id="confirm-modal" class="hidden ims-modal-backdrop">
+    <div class="ims-modal-panel max-w-md p-5 space-y-4">
+      <h3 id="confirm-modal-title" class="text-base font-extrabold">Confirm Action</h3>
+      <p id="confirm-modal-body" class="text-xs leading-relaxed" style="color: var(--text-secondary);"></p>
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closeConfirmModal()" class="ims-btn ims-btn-outline">Cancel</button>
+        <button id="confirm-modal-ok-btn" class="ims-btn ims-btn-crimson">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+    <!-- MODAL: WhatsApp Media 2-Step Fallback Modal -->
+  <div id="whatsapp-media-fallback-modal" class="ims-modal-backdrop hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div class="luxury-card max-w-lg w-full p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-2xl">📎</span>
+          <div>
+            <h3 class="text-base font-extrabold">Attach File in WhatsApp Web</h3>
+            <p class="text-xs text-slate-500">2-Step Desktop Media Transfer Guide</p>
+          </div>
+        </div>
+        <button onclick="closeModal('whatsapp-media-fallback-modal')" class="text-slate-400 hover:text-slate-600 text-lg cursor-pointer">&times;</button>
+      </div>
+
+      <div class="p-3 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 space-y-2 text-xs">
+        <div class="flex items-center gap-2 font-bold text-sky-800 dark:text-sky-300">
+          <span>✓ 1. File Downloaded to your computer</span>
+        </div>
+        <div class="flex items-center gap-2 font-bold text-sky-800 dark:text-sky-300">
+          <span>✓ 2. Formatted message copied to clipboard</span>
+        </div>
+        <div class="flex items-center gap-2 font-bold text-sky-800 dark:text-sky-300">
+          <span>✓ 3. WhatsApp Web chat opened for <span id="wa-fallback-recipient-name">Recipient</span></span>
+        </div>
+      </div>
+
+      <div class="space-y-3 text-xs leading-relaxed text-slate-700 dark:text-slate-300">
+        <p>Because browser security and WhatsApp click-to-chat links do not allow attaching local files via URL alone, we have prepared everything for you:</p>
+        <ol class="list-decimal pl-5 space-y-1.5 font-medium">
+          <li>In the WhatsApp Web tab that just opened, click the <strong>Paperclip (📎) icon</strong> or simply <strong>drag and drop</strong> the downloaded file (<code id="wa-fallback-file-name" class="font-bold text-blue-600">file.pdf</code>) into the chat.</li>
+          <li>Your message is already on your clipboard! If the text box is empty, press <kbd class="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-mono">Ctrl + V</kbd>.</li>
+          <li>Review and click the green <strong>Send</strong> arrow.</li>
+        </ol>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+        <button onclick="markFallbackChatSent()" class="ims-btn ims-btn-emerald ims-btn-sm">✓ Done (Mark as Sent)</button>
+        <button onclick="closeModal('whatsapp-media-fallback-modal')" class="ims-btn ims-btn-secondary ims-btn-sm">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Media Preview Modal -->
+  <div id="media-preview-modal" class="ims-modal-backdrop hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div class="luxury-card max-w-2xl w-full p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 id="media-preview-title" class="text-base font-extrabold">Media Preview</h3>
+        <button onclick="closeModal('media-preview-modal')" class="text-slate-400 hover:text-slate-600 text-lg cursor-pointer">&times;</button>
+      </div>
+      <div id="media-preview-surface" class="min-h-[250px] max-h-[60vh] overflow-auto flex items-center justify-center p-2 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800"></div>
+      <div class="flex items-center justify-between text-xs text-slate-500">
+        <span id="media-preview-meta">PDF • 1.2 MB</span>
+        <div class="flex gap-2">
+          <button id="media-preview-download-btn" class="ims-btn ims-btn-primary ims-btn-sm">⬇️ Download File</button>
+          <button onclick="closeModal('media-preview-modal')" class="ims-btn ims-btn-secondary ims-btn-sm">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Branch / Campus Modal -->
+  <div id="branch-modal" class="ims-modal-backdrop hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div class="luxury-card max-w-md w-full p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 id="branch-modal-title" class="text-base font-extrabold">Add Campus / Branch Location</h3>
+        <button onclick="closeModal('branch-modal')" class="text-slate-400 hover:text-slate-600 text-lg cursor-pointer">&times;</button>
+      </div>
+      <form id="branch-form" onsubmit="saveBranchForm(event)" class="space-y-3 text-xs">
+        <input type="hidden" id="branch-edit-id" />
+        <div>
+          <label class="block font-bold mb-1">Branch / Campus Name</label>
+          <input type="text" id="branch-name-input" required placeholder="e.g. Kothrud Learning Centre" class="ims-input w-full text-xs" />
+        </div>
+        <div>
+          <label class="block font-bold mb-1">Full Campus Address</label>
+          <textarea id="branch-address-input" required rows="3" placeholder="Street, Landmark, City, Pincode" class="ims-input w-full text-xs"></textarea>
+        </div>
+        <div>
+          <label class="block font-bold mb-1">Branch Phone / Desk Number</label>
+          <input type="text" id="branch-phone-input" required placeholder="+91 98220 11223" class="ims-input w-full text-xs" />
+        </div>
+        <div class="flex items-center gap-2 pt-1">
+          <input type="checkbox" id="branch-primary-checkbox" class="cursor-pointer" />
+          <label for="branch-primary-checkbox" class="font-bold cursor-pointer">Set as Primary Campus (displayed on header & main receipts)</label>
+        </div>
+        <div class="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+          <button type="button" onclick="closeModal('branch-modal')" class="ims-btn ims-btn-secondary ims-btn-sm">Cancel</button>
+          <button type="submit" class="ims-btn ims-btn-primary ims-btn-sm">Save Branch Location</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  
+  <!-- Modular Segregated JavaScript Architecture (Clean Dependency Order) -->
+  <script src="js/config.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/modules/dashboard.js"></script>
+  <script src="js/modules/students.js"></script>
+  <script src="js/modules/batches.js"></script>
+  <script src="js/modules/attendance.js"></script>
+  <script src="js/modules/leads.js"></script>
+  <script src="js/modules/whatsapp.js"></script>
+  <script src="js/modules/daily_updates.js"></script>
+  <script src="js/modules/fees.js"></script>
+  <script src="js/modules/certificates.js"></script>
+  <script src="js/modules/staff_portal.js"></script>
+  <script src="js/modules/ai_center.js"></script>
+  <script src="js/modules/settings.js"></script>
+  <script src="js/modules/lectures_and_reports.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Srujaan Share Market Institute Management System</title>
+    <script>
+      // SPA fallback redirect for GitHub Pages / static hosts: converts path into hash route so refresh never 404s
+      (function () {
+        var l = window.location;
+        var segments = l.pathname.split('/').filter(Boolean);
+        var last = segments[segments.length - 1] || '';
+        var knownTabs = [
+          'dashboard',
+          'students',
+          'batches',
+          'attendance',
+          'leads',
+          'whatsapp',
+          'daily-updates',
+          'fees',
+          'certificates',
+          'portal-staff',
+          'workspace',
+          'ai-center',
+          'settings'
+        ];
+        if (knownTabs.indexOf(last) !== -1) {
+          var basePath = l.pathname.slice(0, l.pathname.lastIndexOf('/' + last)) || '/';
+          l.replace(l.origin + basePath + '/#' + last + (l.search || ''));
+        } else {
+          l.replace(l.origin + '/#' + (l.hash ? l.hash.replace(/^#/, '') : 'dashboard'));
+        }
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

@@ -1,0 +1,593 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Authentication & RBAC Primitives
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAuthorizedUser() {
+      return isAuthenticated()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email != null
+        && (
+          request.auth.token.email.lower() == "srujaansharemarketpune@gmail.com"
+          || request.auth.token.email.lower() == "srujaanshareamarketpune@gmail.com"
+          || request.auth.token.email.lower() == "udayhajare18@gmail.com"
+        );
+    }
+
+    function isMasterAdmin() {
+      return isAuthenticated()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email != null
+        && (
+          request.auth.token.email.lower() == "srujaansharemarketpune@gmail.com"
+          || request.auth.token.email.lower() == "srujaanshareamarketpune@gmail.com"
+        );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAllowedWorkspace(instituteId) {
+      return instituteId == 'ssm_pune_main'
+        || instituteId == 'srujaan_share_market_pune'
+        || instituteId == 'institute_master_data';
+    }
+
+    function isValidTombstone(data) {
+      return data is map
+        && 'isDeleted' in data
+        && data.isDeleted == true
+        && data.size() <= 16
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('code' in data) || (data.code is string && data.code.size() <= 64))
+        && (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 64))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64) || data.updatedAt is timestamp)
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64));
+    }
+
+    function hasNoForbiddenPrivilegeFields(data) {
+      return !('isAdmin' in data)
+        && !('isSuperAdmin' in data)
+        && !('adminOverride' in data);
+    }
+
+    function hasValidSize(data) {
+      return data is map && data.size() <= 150;
+    }
+
+    // Entity Validation Blueprints (Anti-Update-Gap & Resource Poisoning Guards)
+    function isValidStudent(data) {
+      return data is map
+        && data.size() <= 80
+        && hasNoForbiddenPrivilegeFields(data)
+        && (
+          isValidTombstone(data)
+          || (
+            (!('id' in data) || (data.id is string && data.id.size() <= 128))
+            && (!('regId' in data) || (data.regId is string && data.regId.size() <= 64))
+            && (!('leadId' in data) || (data.leadId is string && data.leadId.size() <= 128))
+            && (!('name' in data) || (data.name is string && data.name.size() <= 128))
+            && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
+            && (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.size() <= 32))
+            && (!('email' in data) || (data.email is string && data.email.size() <= 128))
+            && (!('address' in data) || (data.address is string && data.address.size() <= 512))
+            && (!('course' in data) || (data.course is string && data.course.size() <= 128))
+            && (!('batch' in data) || (data.batch is string && data.batch.size() <= 64))
+            && (!('status' in data) || (data.status is string && data.status.size() <= 32))
+            && (!('source' in data) || (data.source is string && data.source.size() <= 64))
+            && (!('netFee' in data) || data.netFee is number)
+            && (!('grossFee' in data) || data.grossFee is number)
+            && (!('discount' in data) || data.discount is number)
+            && (!('feesPaid' in data) || data.feesPaid is number)
+            && (!('pendingFees' in data) || data.pendingFees is number)
+            && (!('totalFees' in data) || data.totalFees is number)
+            && (!('docs' in data) || (data.docs is string && data.docs.size() <= 512))
+            && (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000))
+            && (!('milestones' in data) || (data.milestones is list && data.milestones.size() <= 100))
+            && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+            && (!('isDeleted' in data) || data.isDeleted is bool)
+          )
+        );
+    }
+
+    function isValidLead(data) {
+      return data is map
+        && data.size() <= 60
+        && hasNoForbiddenPrivilegeFields(data)
+        && (
+          isValidTombstone(data)
+          || (
+            (!('id' in data) || (data.id is string && data.id.size() <= 128))
+            && (!('name' in data) || (data.name is string && data.name.size() <= 128))
+            && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
+            && (!('email' in data) || (data.email is string && data.email.size() <= 128))
+            && (!('locality' in data) || (data.locality is string && data.locality.size() <= 128))
+            && (!('course' in data) || (data.course is string && data.course.size() <= 128))
+            && (!('source' in data) || (data.source is string && data.source.size() <= 64))
+            && (!('stage' in data) || (data.stage is string && data.stage.size() <= 64))
+            && (!('intent' in data) || (data.intent is string && data.intent.size() <= 32))
+            && (!('staff' in data) || (data.staff is string && data.staff.size() <= 128))
+            && (!('objection' in data) || (data.objection is string && data.objection.size() <= 256))
+            && (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000))
+            && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+            && (!('isDeleted' in data) || data.isDeleted is bool)
+          )
+        );
+    }
+
+    function isValidBatch(data) {
+      return data is map
+        && data.size() <= 50
+        && hasNoForbiddenPrivilegeFields(data)
+        && (
+          isValidTombstone(data)
+          || (
+            (!('code' in data) || (data.code is string && data.code.size() <= 64))
+            && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+            && (!('name' in data) || (data.name is string && data.name.size() <= 128))
+            && (!('course' in data) || (data.course is string && data.course.size() <= 128))
+            && (!('mode' in data) || (data.mode is string && data.mode.size() <= 64))
+            && (!('instructor' in data) || (data.instructor is string && data.instructor.size() <= 128))
+            && (!('schedule' in data) || (data.schedule is string && data.schedule.size() <= 128))
+            && (!('capacity' in data) || data.capacity is number)
+            && (!('status' in data) || (data.status is string && data.status.size() <= 32))
+            && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+            && (!('isDeleted' in data) || data.isDeleted is bool)
+          )
+        );
+    }
+
+    function isValidCourse(data) {
+      return data is map
+        && data.size() <= 50
+        && hasNoForbiddenPrivilegeFields(data)
+        && (
+          isValidTombstone(data)
+          || (
+            (!('id' in data) || (data.id is string && data.id.size() <= 128))
+            && (!('code' in data) || (data.code is string && data.code.size() <= 64))
+            && (!('name' in data) || (data.name is string && data.name.size() <= 128))
+            && (!('duration' in data) || (data.duration is string && data.duration.size() <= 64))
+            && (!('fee' in data) || data.fee is number)
+            && (!('mode' in data) || (data.mode is string && data.mode.size() <= 64))
+            && (!('instructor' in data) || (data.instructor is string && data.instructor.size() <= 128))
+            && (!('syllabus' in data) || (data.syllabus is string && data.syllabus.size() <= 5000))
+            && (!('status' in data) || (data.status is string && data.status.size() <= 32))
+            && (!('lectures' in data) || (data.lectures is list && data.lectures.size() <= 200))
+            && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+            && (!('isDeleted' in data) || data.isDeleted is bool)
+          )
+        );
+    }
+
+    function isValidStaff(data) {
+      return data is map
+        && data.size() <= 50
+        && hasNoForbiddenPrivilegeFields(data)
+        && (
+          isValidTombstone(data)
+          || (
+            (!('id' in data) || (data.id is string && data.id.size() <= 128))
+            && (!('name' in data) || (data.name is string && data.name.size() <= 128))
+            && (!('role' in data) || (data.role is string && data.role.size() <= 128))
+            && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
+            && (!('email' in data) || (data.email is string && data.email.size() <= 128))
+            && (!('salary' in data) || data.salary is number)
+            && (!('batches' in data) || (data.batches is string && data.batches.size() <= 256))
+            && (!('status' in data) || (data.status is string && data.status.size() <= 32))
+            && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+            && (!('isDeleted' in data) || data.isDeleted is bool)
+          )
+        );
+    }
+
+    function isValidPayment(data) {
+      return data is map
+        && data.size() <= 40
+        && hasNoForbiddenPrivilegeFields(data)
+        && (
+          isValidTombstone(data)
+          || (
+            (!('paymentId' in data) || (data.paymentId is string && data.paymentId.size() <= 128))
+            && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+            && (!('studentId' in data) || (data.studentId is string && data.studentId.size() <= 128))
+            && (!('studentName' in data) || (data.studentName is string && data.studentName.size() <= 128))
+            && (!('amount' in data) || (data.amount is number && data.amount >= 0))
+            && (!('receiptNo' in data) || (data.receiptNo is string && data.receiptNo.size() <= 64))
+            && (!('paymentMode' in data) || (data.paymentMode is string && data.paymentMode.size() <= 64))
+            && (!('remarks' in data) || (data.remarks is string && data.remarks.size() <= 512))
+            && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+            && (!('isDeleted' in data) || data.isDeleted is bool)
+          )
+        );
+    }
+
+    function isValidAttendance(data) {
+      return data is map
+        && data.size() <= 40
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('batchCode' in data) || (data.batchCode is string && data.batchCode.size() <= 64))
+        && (!('date' in data) || (data.date is string && data.date.size() <= 32))
+        && (!('topic' in data) || (data.topic is string && data.topic.size() <= 256))
+        && (!('records' in data) || (data.records is map && data.records.size() <= 500))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+        && (!('isDeleted' in data) || data.isDeleted is bool);
+    }
+
+    function isValidMaterial(data) {
+      return data is map
+        && data.size() <= 40
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('title' in data) || (data.title is string && data.title.size() <= 256))
+        && (!('course' in data) || (data.course is string && data.course.size() <= 128))
+        && (!('summary' in data) || (data.summary is string && data.summary.size() <= 2000))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+        && (!('isDeleted' in data) || data.isDeleted is bool);
+    }
+
+    function isValidLecture(data) {
+      return data is map
+        && data.size() <= 40
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('topic' in data) || (data.topic is string && data.topic.size() <= 256))
+        && (!('batchCode' in data) || (data.batchCode is string && data.batchCode.size() <= 64))
+        && (!('instructor' in data) || (data.instructor is string && data.instructor.size() <= 128))
+        && (!('status' in data) || (data.status is string && data.status.size() <= 32))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+        && (!('isDeleted' in data) || data.isDeleted is bool);
+    }
+
+    function isValidCertificate(data) {
+      return data is map
+        && data.size() <= 40
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('studentId' in data) || (data.studentId is string && data.studentId.size() <= 128))
+        && (!('studentName' in data) || (data.studentName is string && data.studentName.size() <= 128))
+        && (!('course' in data) || (data.course is string && data.course.size() <= 128))
+        && (!('grade' in data) || (data.grade is string && data.grade.size() <= 32))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+        && (!('isDeleted' in data) || data.isDeleted is bool);
+    }
+
+    function isValidAuditLog(data) {
+      return data is map
+        && data.size() <= 30
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('category' in data) || (data.category is string && data.category.size() <= 64))
+        && (!('action' in data) || (data.action is string && data.action.size() <= 128))
+        && (!('actor' in data) || (data.actor is string && data.actor.size() <= 128))
+        && (!('details' in data) || (data.details is string && data.details.size() <= 1000))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64));
+    }
+
+    function isValidDailyQueue(data) {
+      return data is map
+        && data.size() <= 30
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('recipientName' in data) || (data.recipientName is string && data.recipientName.size() <= 128))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
+        && (!('message' in data) || (data.message is string && data.message.size() <= 2000))
+        && (!('status' in data) || (data.status is string && data.status.size() <= 32))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64))
+        && (!('isDeleted' in data) || data.isDeleted is bool);
+    }
+
+    function isValidSettings(data) {
+      return data is map
+        && data.size() <= 80
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('instituteName' in data) || (data.instituteName is string && data.instituteName.size() <= 200))
+        && (!('email' in data) || (data.email is string && data.email.size() <= 128))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 32))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64));
+    }
+
+    function isValidBackup(data) {
+      return data is map
+        && data.size() <= 40
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('backupId' in data) || (data.backupId is string && data.backupId.size() <= 128))
+        && (!('studentCount' in data) || data.studentCount is number)
+        && (!('totalRecords' in data) || data.totalRecords is number)
+        && (!('students' in data) || (data.students is list && data.students.size() <= 2000))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64));
+    }
+
+    function isValidInstituteDoc(data) {
+      return data is map
+        && data.size() <= 80
+        && hasNoForbiddenPrivilegeFields(data)
+        && (!('students' in data) || (data.students is list && data.students.size() <= 2000))
+        && (!('leads' in data) || (data.leads is list && data.leads.size() <= 2000))
+        && (!('batches' in data) || (data.batches is list && data.batches.size() <= 500))
+        && (!('courses' in data) || (data.courses is list && data.courses.size() <= 500))
+        && (!('staff' in data) || (data.staff is list && data.staff.size() <= 500))
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 64));
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data is map
+        && data.keys().hasAll(['uid', 'email'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoURL', 'role', 'updatedAt', 'createdAt', 'serverUpdatedAt'])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid.size() <= 128
+        && data.email is string
+        && data.email.size() <= 128
+        && data.email.lower() == request.auth.token.email.lower()
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && (!('role' in data) || (data.role is string && data.role in ['admin', 'authorized_user', 'instructor', 'counselor'] && (data.role != 'admin' || isMasterAdmin())));
+    }
+
+    // Connection Probe Document (Firebase Skill Readiness Check)
+    match /test/{testId} {
+      allow get: if isAuthorizedUser() && isValidId(testId);
+      allow list, write: if false;
+    }
+
+    // User Profiles (PII Isolated to Owner or Master Admin, Role Escalation Blocked)
+    match /users/{userId} {
+      allow get: if (isAuthorizedUser() && request.auth.uid == userId && isValidId(userId)) || (isMasterAdmin() && isValidId(userId));
+      allow list: if isMasterAdmin();
+      allow create: if isAuthorizedUser() && isValidId(userId) && request.auth.uid == userId && isValidUserProfile(incoming(), userId);
+      allow update: if isAuthorizedUser() && isValidId(userId) && request.auth.uid == userId && isValidUserProfile(incoming(), userId) && incoming().uid == existing().uid;
+      allow delete: if isMasterAdmin() && isValidId(userId);
+    }
+
+    // Shared Institutional Workspace Root & Explicit Named Subcollections
+    match /institutes/{instituteId} {
+      allow get: if isAuthorizedUser() && isValidId(instituteId) && isAllowedWorkspace(instituteId);
+      allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+      allow create, update: if isAuthorizedUser() && isValidId(instituteId) && isAllowedWorkspace(instituteId) && isValidInstituteDoc(incoming());
+      allow delete: if isMasterAdmin() && isValidId(instituteId);
+
+      match /students/{studentId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(studentId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(studentId) && isValidStudent(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(studentId);
+      }
+
+      match /leads/{leadId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(leadId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(leadId) && isValidLead(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(leadId);
+      }
+
+      match /batches/{batchCode} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(batchCode);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(batchCode) && isValidBatch(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(batchCode);
+      }
+
+      match /courses/{courseId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(courseId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(courseId) && isValidCourse(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(courseId);
+      }
+
+      match /staff/{staffId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(staffId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(staffId) && isValidStaff(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(staffId);
+      }
+
+      match /materials/{materialId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(materialId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(materialId) && isValidMaterial(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(materialId);
+      }
+
+      match /lectures/{lectureId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(lectureId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(lectureId) && isValidLecture(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(lectureId);
+      }
+
+      match /certificates/{certificateId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(certificateId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(certificateId) && isValidCertificate(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(certificateId);
+      }
+
+      match /attendance/{attendanceId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(attendanceId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(attendanceId) && isValidAttendance(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(attendanceId);
+      }
+
+      match /payments/{paymentId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(paymentId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(paymentId) && isValidPayment(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(paymentId);
+      }
+
+      match /audit_logs/{auditId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(auditId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(auditId) && isValidAuditLog(incoming());
+        allow update, delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(auditId);
+      }
+
+      match /daily_queue/{queueId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(queueId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(queueId) && isValidDailyQueue(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(queueId);
+      }
+
+      match /settings/{settingId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(settingId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(settingId) && isValidSettings(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(settingId);
+      }
+
+      match /backups/{backupId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(backupId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(backupId) && isValidBackup(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(backupId);
+      }
+    }
+
+    // Legacy Top-Level Collections (Migration & Backward-Compatibility Read/Write)
+    match /students/{studentId} {
+      allow get: if isAuthorizedUser() && isValidId(studentId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(studentId) && isValidStudent(incoming());
+      allow delete: if isMasterAdmin() && isValidId(studentId);
+    }
+
+    match /leads/{leadId} {
+      allow get: if isAuthorizedUser() && isValidId(leadId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(leadId) && isValidLead(incoming());
+      allow delete: if isMasterAdmin() && isValidId(leadId);
+    }
+
+    match /inquiries/{inquiryId} {
+      allow get: if isAuthorizedUser() && isValidId(inquiryId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(inquiryId) && isValidLead(incoming());
+      allow delete: if isMasterAdmin() && isValidId(inquiryId);
+    }
+
+    match /batches/{batchCode} {
+      allow get: if isAuthorizedUser() && isValidId(batchCode);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(batchCode) && isValidBatch(incoming());
+      allow delete: if isMasterAdmin() && isValidId(batchCode);
+    }
+
+    match /courses/{courseId} {
+      allow get: if isAuthorizedUser() && isValidId(courseId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(courseId) && isValidCourse(incoming());
+      allow delete: if isMasterAdmin() && isValidId(courseId);
+    }
+
+    match /staff/{staffId} {
+      allow get: if isAuthorizedUser() && isValidId(staffId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(staffId) && isValidStaff(incoming());
+      allow delete: if isMasterAdmin() && isValidId(staffId);
+    }
+
+    match /settings/{settingId} {
+      allow get: if isAuthorizedUser() && isValidId(settingId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(settingId) && isValidSettings(incoming());
+      allow delete: if isMasterAdmin() && isValidId(settingId);
+    }
+
+    match /backups/{backupId} {
+      allow get: if isAuthorizedUser() && isValidId(backupId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(backupId) && isValidBackup(incoming());
+      allow delete: if isMasterAdmin() && isValidId(backupId);
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isAuthorizedUser() && isValidId(paymentId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(paymentId) && isValidPayment(incoming());
+      allow delete: if isMasterAdmin() && isValidId(paymentId);
+    }
+
+    match /fees/{feeId} {
+      allow get: if isAuthorizedUser() && isValidId(feeId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(feeId) && isValidPayment(incoming());
+      allow delete: if isMasterAdmin() && isValidId(feeId);
+    }
+
+    match /attendance/{attendanceId} {
+      allow get: if isAuthorizedUser() && isValidId(attendanceId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(attendanceId) && isValidAttendance(incoming());
+      allow delete: if isMasterAdmin() && isValidId(attendanceId);
+    }
+
+    match /expenses/{expenseId} {
+      allow get: if isAuthorizedUser() && isValidId(expenseId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(expenseId) && isValidAuditLog(incoming());
+      allow delete: if isMasterAdmin() && isValidId(expenseId);
+    }
+
+    match /lectures/{lectureId} {
+      allow get: if isAuthorizedUser() && isValidId(lectureId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(lectureId) && isValidLecture(incoming());
+      allow delete: if isMasterAdmin() && isValidId(lectureId);
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isAuthorizedUser() && isValidId(notificationId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(notificationId) && isValidAuditLog(incoming());
+      allow delete: if isMasterAdmin() && isValidId(notificationId);
+    }
+
+    // ===============================================================
+    // CLEAN SSMI CRM DATA ROOT COLLECTION & ITEMS SUBCOLLECTIONS
+    // ===============================================================
+    match /ssmi_crm_data/{collectionName} {
+      allow get: if isAuthorizedUser() && isValidId(collectionName);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser()
+        && isValidId(collectionName)
+        && hasValidSize(incoming())
+        && incoming().keys().size() <= 150;
+      allow delete: if isMasterAdmin() && isValidId(collectionName);
+
+      match /items/{docId} {
+        allow get: if isAuthorizedUser() && isValidId(docId);
+        allow list: if isAuthorizedUser();
+        allow create, update: if isAuthorizedUser()
+          && isValidId(collectionName)
+          && isValidId(docId)
+          && hasValidSize(incoming())
+          && incoming().keys().size() <= 150;
+        allow delete: if isAuthorizedUser() && isValidId(docId);
+      }
+    }
+  }
+}

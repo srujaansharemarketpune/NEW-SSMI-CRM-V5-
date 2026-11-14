@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en" class="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <title>Srujaan Share Market Institute Management System</title>
+    <meta name="application-name" content="Srujaan Share Market Institute Management System" />
+    <meta name="apple-mobile-web-app-title" content="Srujaan Share Market Institute Management System" />
+    <meta name="description" content="Srujaan Share Market Institute Management System — WHERE KNOWLEDGE MEETS PROFIT. Executive offline-first institute operations suite featuring student admissions, attendance ledger, 10-stage lead CRM, trilingual WhatsApp studio, fee installments with A4 receipts, course completion certificates, and Firebase cloud data synchronization." />
+    <meta property="og:title" content="Srujaan Share Market Institute Management System" />
+    <meta property="og:description" content="Srujaan Share Market Institute Management System — WHERE KNOWLEDGE MEETS PROFIT. Executive offline-first institute operations suite featuring student admissions, attendance ledger, 10-stage lead CRM, trilingual WhatsApp studio, fee installments with A4 receipts, course completion certificates, and Firebase cloud data synchronization." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#0F172A" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'%3E%3Crect width='60' height='60' rx='14' fill='%230f172a'/%3E%3Cpath d='M15 42V25M15 18V14M11 25H19V36H11V25Z' stroke='%2310b981' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M30 46V30M30 18V12M26 18H34V30H26V18Z' stroke='%233b82f6' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M45 38V20M45 14V10M41 14H49V24H41V14Z' stroke='%23f59e0b' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js" async defer></script>
+    <script>
+      window.global = window.global || window;
+      window.process = window.process || { env: { NODE_ENV: 'production' } };
+      (function() {
+        // 1. Guard against any residual corrupted Firestore IndexedDB segment error
+        function purgeCorruptedFirestoreIndexedDB(forceAllFirestore) {
+          try {
+            if (typeof indexedDB !== 'undefined' && typeof indexedDB.databases === 'function') {
+              indexedDB.databases().then(function(dbs) {
+                (dbs || []).forEach(function(dbInfo) {
+                  var name = (dbInfo && dbInfo.name) ? String(dbInfo.name) : '';
+                  if (!name) return;
+                  var isCorruptedFirestore =
+                    name.indexOf('firebase.io') !== -1 ||
+                    name.indexOf('http:') !== -1 ||
+                    name.indexOf('https:') !== -1 ||
+                    name.indexOf('//') !== -1 ||
+                    (forceAllFirestore && name.indexOf('firestore/') === 0);
+                  if (isCorruptedFirestore) {
+                    try { indexedDB.deleteDatabase(name); } catch (e) {}
+                  }
+                });
+              }).catch(function() {});
+            }
+          } catch (e) {}
+        }
+
+        // One-time cleanup of legacy Firestore IndexedDB cache that stored the invalid URL databaseId
+        try {
+          var migrationKey = 'ssm_clean_firestore_idb_v4';
+          if (!localStorage.getItem(migrationKey)) {
+            localStorage.setItem(migrationKey, String(Date.now()));
+            purgeCorruptedFirestoreIndexedDB(true);
+          } else {
+            purgeCorruptedFirestoreIndexedDB(false);
+          }
+
+          // Sanitize any localStorage config entries that accidentally stored firebase.io.com as databaseId
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (!k) continue;
+            var v = localStorage.getItem(k);
+            if (v && (v.indexOf('firebase.io.com') !== -1 || v.indexOf('sync_health') !== -1)) {
+              if (k.indexOf('outbox') !== -1 || k.indexOf('PENDING_SYNC') !== -1) {
+                localStorage.removeItem(k);
+              } else {
+                localStorage.setItem(
+                  k,
+                  v.replace(/https?:\/\/[a-zA-Z0-9.-]+\.firebase\.io\.com\/?/g, '(default)')
+                );
+              }
+            }
+          }
+        } catch (e) {}
+
+        window.addEventListener('error', function(event) {
+          var msg = String((event && event.message) || (event && event.error && event.error.message) || '');
+          if (msg.indexOf('Invalid segment') !== -1 || msg.indexOf('Paths must not contain //') !== -1) {
+            event.preventDefault();
+            purgeCorruptedFirestoreIndexedDB(true);
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          var reason = event && event.reason;
+          var msg = String((reason && reason.message) || reason || '');
+          if (msg.indexOf('Invalid segment') !== -1 || msg.indexOf('Paths must not contain //') !== -1) {
+            event.preventDefault();
+            purgeCorruptedFirestoreIndexedDB(true);
+          }
+        }, true);
+
+        // 2. Clear legacy service worker caches to prevent serving stale bundles
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for (var i = 0; i < registrations.length; i++) {
+              registrations[i].unregister();
+            }
+          });
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(keys) {
+            keys.forEach(function(key) {
+              caches.delete(key);
+            });
+          });
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-[#F8FAFC] text-[#0F172A] antialiased min-h-screen overflow-x-hidden selection:bg-blue-600 selection:text-white">
+    <div id="root" class="overflow-x-hidden"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

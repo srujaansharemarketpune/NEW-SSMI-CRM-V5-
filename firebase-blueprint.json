@@ -1,0 +1,451 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "Enrolled student record at Srujaan Share Market Institute",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "regId": { "type": "string", "maxLength": 64 },
+        "leadId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "whatsapp": { "type": "string", "maxLength": 32 },
+        "email": { "type": "string", "maxLength": 128 },
+        "address": { "type": "string", "maxLength": 512 },
+        "course": { "type": "string", "maxLength": 128 },
+        "batch": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["Active", "On Hold", "Completed", "Archived", "Dropped"] },
+        "source": { "type": "string", "maxLength": 64 },
+        "netFee": { "type": "number" },
+        "grossFee": { "type": "number" },
+        "discount": { "type": "number" },
+        "feesPaid": { "type": "number" },
+        "pendingFees": { "type": "number" },
+        "totalFees": { "type": "number" },
+        "enrollDate": { "type": "string", "maxLength": 32 },
+        "joinDate": { "type": "string", "maxLength": 32 },
+        "docs": { "type": "string", "maxLength": 512 },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "milestones": { "type": "array" },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "Prospective student enquiry in CRM pipeline",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "email": { "type": "string", "maxLength": 128 },
+        "locality": { "type": "string", "maxLength": 128 },
+        "course": { "type": "string", "maxLength": 128 },
+        "source": { "type": "string", "maxLength": 64 },
+        "stage": { "type": "string", "maxLength": 64 },
+        "intent": { "type": "string", "enum": ["Hot", "Warm", "Cold"] },
+        "enquiryDate": { "type": "string", "maxLength": 32 },
+        "followUpDate": { "type": "string", "maxLength": 32 },
+        "followUpTime": { "type": "string", "maxLength": 32 },
+        "lastContact": { "type": "string", "maxLength": 32 },
+        "mode": { "type": "string", "maxLength": 64 },
+        "staff": { "type": "string", "maxLength": 128 },
+        "objection": { "type": "string", "maxLength": 256 },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "Batch": {
+      "title": "Batch",
+      "description": "Academic course batch and timing schedule",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 128 },
+        "course": { "type": "string", "maxLength": 128 },
+        "mode": { "type": "string", "maxLength": 64 },
+        "instructor": { "type": "string", "maxLength": 128 },
+        "schedule": { "type": "string", "maxLength": 128 },
+        "startDate": { "type": "string", "maxLength": 32 },
+        "endDate": { "type": "string", "maxLength": 32 },
+        "capacity": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Upcoming", "Completed", "Archived"] },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["code"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "Share market trading course and curriculum",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "code": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 128 },
+        "duration": { "type": "string", "maxLength": 64 },
+        "fee": { "type": "number" },
+        "mode": { "type": "string", "maxLength": 64 },
+        "instructor": { "type": "string", "maxLength": 128 },
+        "syllabus": { "type": "string", "maxLength": 4000 },
+        "status": { "type": "string", "enum": ["Active", "Upcoming", "Archived"] },
+        "lectures": { "type": "array" },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "Faculty or staff member at the institute",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "email": { "type": "string", "maxLength": 128 },
+        "salary": { "type": "number" },
+        "joiningDate": { "type": "string", "maxLength": 32 },
+        "batches": { "type": "string", "maxLength": 256 },
+        "status": { "type": "string", "enum": ["Active", "On Leave", "Inactive"] },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "StudyMaterial": {
+      "title": "StudyMaterial",
+      "description": "Course study materials, PDFs, notes, and resource links",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 256 },
+        "courseId": { "type": "string", "maxLength": 128 },
+        "course": { "type": "string", "maxLength": 128 },
+        "fileType": { "type": "string", "maxLength": 32 },
+        "type": { "type": "string", "maxLength": 64 },
+        "fileSize": { "type": "string", "maxLength": 64 },
+        "fileName": { "type": "string", "maxLength": 256 },
+        "uploadDate": { "type": "string", "maxLength": 32 },
+        "batchAccess": { "type": "string", "maxLength": 128 },
+        "summary": { "type": "string", "maxLength": 2000 },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "LectureSession": {
+      "title": "LectureSession",
+      "description": "Scheduled or completed class lecture session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "courseId": { "type": "string", "maxLength": 128 },
+        "batchCode": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "maxLength": 32 },
+        "time": { "type": "string", "maxLength": 32 },
+        "topic": { "type": "string", "maxLength": 256 },
+        "module": { "type": "string", "maxLength": 128 },
+        "sessionType": { "type": "string", "maxLength": 64 },
+        "durationMins": { "type": "number" },
+        "summaryOrLink": { "type": "string", "maxLength": 1000 },
+        "instructor": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["Scheduled", "Completed", "Rescheduled", "Cancelled"] },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "Issued completion certificate record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 128 },
+        "regId": { "type": "string", "maxLength": 64 },
+        "course": { "type": "string", "maxLength": 128 },
+        "batchCode": { "type": "string", "maxLength": 64 },
+        "issueDate": { "type": "string", "maxLength": 32 },
+        "grade": { "type": "string", "maxLength": 32 },
+        "issuedBy": { "type": "string", "maxLength": 128 },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "AttendanceSession": {
+      "title": "AttendanceSession",
+      "description": "Batch attendance session keyed by batch and date",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "sessionKey": { "type": "string", "maxLength": 128 },
+        "batchCode": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "maxLength": 32 },
+        "sessionStatus": { "type": "string", "enum": ["Completed", "Scheduled", "Cancelled"] },
+        "topic": { "type": "string", "maxLength": 256 },
+        "records": { "type": "object" },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "PaymentRecord": {
+      "title": "PaymentRecord",
+      "description": "Atomic fee payment transaction record",
+      "type": "object",
+      "properties": {
+        "paymentId": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 128 },
+        "amount": { "type": "number" },
+        "receiptNo": { "type": "string", "maxLength": 64 },
+        "paymentMode": { "type": "string", "maxLength": 64 },
+        "remarks": { "type": "string", "maxLength": 512 },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["paymentId", "studentId", "amount"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable CRM operation audit log entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 64 },
+        "action": { "type": "string", "maxLength": 128 },
+        "recordId": { "type": "string", "maxLength": 128 },
+        "actor": { "type": "string", "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "DailyQueueItem": {
+      "title": "DailyQueueItem",
+      "description": "Daily communication/follow-up queue entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 32 },
+        "recipientType": { "type": "string", "enum": ["Student", "Lead"] },
+        "recipientId": { "type": "string", "maxLength": 128 },
+        "recipientName": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "batchCode": { "type": "string", "maxLength": 64 },
+        "scenario": { "type": "string", "maxLength": 128 },
+        "message": { "type": "string", "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["Prepared", "Chat Opened", "Marked Sent"] },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id"]
+    },
+    "InstituteSettings": {
+      "title": "InstituteSettings",
+      "description": "Global institute profile, master snapshot, and integration configuration",
+      "type": "object",
+      "properties": {
+        "instituteName": { "type": "string", "maxLength": 200 },
+        "tagline": { "type": "string", "maxLength": 300 },
+        "campusAddress": { "type": "string", "maxLength": 500 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "email": { "type": "string", "maxLength": 128 },
+        "website": { "type": "string", "maxLength": 256 },
+        "gstin": { "type": "string", "maxLength": 32 },
+        "upiId": { "type": "string", "maxLength": 128 },
+        "currencySymbol": { "type": "string", "maxLength": 10 },
+        "receiptPrefix": { "type": "string", "maxLength": 32 },
+        "signatoryName": { "type": "string", "maxLength": 128 },
+        "signatoryDesignation": { "type": "string", "maxLength": 128 },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      }
+    },
+    "BackupSnapshot": {
+      "title": "BackupSnapshot",
+      "description": "Timestamped system backup snapshot containing student records and audit metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "backupId": { "type": "string", "maxLength": 128 },
+        "workspaceId": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "studentCount": { "type": "number" },
+        "totalRecords": { "type": "number" },
+        "students": { "type": "array" },
+        "checksum": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "maxLength": 32 },
+        "notes": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile and access role",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "role": { "type": "string", "enum": ["admin", "authorized_user", "instructor", "counselor", "student"] },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "email"]
+    }
+  },
+  "firestore": {
+    "/institutes/{instituteId}": {
+      "schema": "InstituteSettings",
+      "description": "Shared canonical workspace root (ssm_pune_main) and legacy migration snapshots"
+    },
+    "/institutes/{instituteId}/students/{studentId}": {
+      "schema": "Student",
+      "description": "Canonical student records collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "Canonical CRM prospect leads collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/batches/{batchCode}": {
+      "schema": "Batch",
+      "description": "Canonical course batches collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Canonical courses collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/staff/{staffId}": {
+      "schema": "StaffMember",
+      "description": "Canonical staff members collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/materials/{materialId}": {
+      "schema": "StudyMaterial",
+      "description": "Study materials collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/lectures/{lectureId}": {
+      "schema": "LectureSession",
+      "description": "Lecture sessions collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/certificates/{certificateId}": {
+      "schema": "Certificate",
+      "description": "Issued certificates collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/attendance/{attendanceId}": {
+      "schema": "AttendanceSession",
+      "description": "Attendance sessions collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/payments/{paymentId}": {
+      "schema": "PaymentRecord",
+      "description": "Atomic fee payment records inside the shared workspace"
+    },
+    "/institutes/{instituteId}/audit_logs/{auditId}": {
+      "schema": "AuditLog",
+      "description": "CRM audit log entries inside the shared workspace"
+    },
+    "/institutes/{instituteId}/daily_queue/{queueId}": {
+      "schema": "DailyQueueItem",
+      "description": "Daily WhatsApp follow-up queue inside the shared workspace"
+    },
+    "/institutes/{instituteId}/settings/{settingId}": {
+      "schema": "InstituteSettings",
+      "description": "Institute settings and integration configuration inside the shared workspace"
+    },
+    "/institutes/{instituteId}/backups/{backupId}": {
+      "schema": "BackupSnapshot",
+      "description": "Cloud backup audit records and snapshots inside the shared workspace"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Authenticated user profiles"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Legacy top-level student records (read/migration compatibility)"
+    },
+    "/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "Legacy top-level lead records (read/migration compatibility)"
+    },
+    "/inquiries/{inquiryId}": {
+      "schema": "Lead",
+      "description": "Legacy top-level inquiries collection (read/migration compatibility)"
+    },
+    "/batches/{batchCode}": {
+      "schema": "Batch",
+      "description": "Legacy top-level batches collection (read/migration compatibility)"
+    },
+    "/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Legacy top-level courses collection (read/migration compatibility)"
+    },
+    "/staff/{staffId}": {
+      "schema": "StaffMember",
+      "description": "Legacy top-level staff collection (read/migration compatibility)"
+    },
+    "/settings/{settingId}": {
+      "schema": "InstituteSettings",
+      "description": "Legacy top-level settings collection (read/migration compatibility)"
+    },
+    "/backups/{backupId}": {
+      "schema": "BackupSnapshot",
+      "description": "Top-level cloud backup snapshots"
+    },
+    "/payments/{paymentId}": {
+      "schema": "PaymentRecord",
+      "description": "Legacy top-level payments collection"
+    },
+    "/fees/{feeId}": {
+      "schema": "PaymentRecord",
+      "description": "Legacy top-level fee records"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": "AttendanceSession",
+      "description": "Legacy top-level attendance records"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "AuditLog",
+      "description": "Legacy top-level expenses collection"
+    },
+    "/lectures/{lectureId}": {
+      "schema": "LectureSession",
+      "description": "Legacy top-level lectures collection"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "AuditLog",
+      "description": "Legacy top-level notifications collection"
+    }
+  }
+}
