@@ -3468,151 +3468,38 @@ export async function syncFullStateToFirestore(state: AppState, forceReplace = f
 
 export async function fetchCoursesFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
-  try {
-    const [wsSnap, topSnap] = await Promise.all([
-      getDocsWithLocationFallback(getColRef('courses'), 3000),
-      getDocsWithLocationFallback(collection(db, 'courses'), 3000)
-    ]);
-    const snap = wsSnap && !wsSnap.empty ? wsSnap : topSnap;
-    if (!snap || snap.empty) return [];
-    recordCloudReadSuccess();
-    const deletedIds = getDeletedIds('courses');
-    return snap.docs
-      .map((d: any) => ({ id: d.id, ...d.data() }))
-      .filter((item: any) => item && !item.isDeleted && !deletedIds.has(String(item.id)));
-  } catch (e) {
-    console.warn('Error fetching courses from Firestore:', e);
-    return [];
-  }
+  const master = await fetchMasterSnapshotFromFirestore();
+  return filterActiveRecords(Array.isArray(master?.courses) ? master.courses : [], 'courses', 'id');
 }
 
 export async function fetchStudentsFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
-  try {
-    const [wsSnap, legacySnap, topSnap] = await Promise.all([
-      getDocsWithLocationFallback(getColRef('students'), 3000),
-      getDocsWithLocationFallback(getLegacyColRef('students'), 3000),
-      getDocsWithLocationFallback(collection(db, 'students'), 3000)
-    ]);
-    const list: Student[] = [];
-    const ingest = (snap: any) => {
-      if (!snap || snap.empty) return;
-      recordCloudReadSuccess();
-      snap.forEach((docSnap: any) => {
-        const raw = docSnap.data();
-        const id = String(raw?.id || docSnap.id || '').trim();
-        if (!raw || !id) return;
-        if (raw.isDeleted === true || raw.deletedAt) {
-          markDeletedId('students', id);
-          return;
-        }
-        list.push({
-          ...raw,
-          id,
-          regId: String(raw.regId || id),
-          milestones: Array.isArray(raw.milestones) ? raw.milestones : []
-        } as Student);
-      });
-    };
-    ingest(topSnap);
-    ingest(legacySnap);
-    ingest(wsSnap);
-    return mergeStudentsSafely([], list);
-  } catch (e) {
-    console.warn('Error fetching students from Firestore:', e);
-    return [];
-  }
+  const master = await fetchMasterSnapshotFromFirestore();
+  return filterActiveRecords(Array.isArray(master?.students) ? master.students : [], 'students', 'id');
 }
 
 export async function fetchLeadsFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
-  try {
-    const [wsSnap, legacySnap, topSnap] = await Promise.all([
-      getDocsWithLocationFallback(getColRef('leads'), 3000),
-      getDocsWithLocationFallback(getLegacyColRef('leads'), 3000),
-      getDocsWithLocationFallback(collection(db, 'leads'), 3000)
-    ]);
-    const list: Lead[] = [];
-    const ingest = (snap: any) => {
-      if (!snap || snap.empty) return;
-      recordCloudReadSuccess();
-      snap.forEach((docSnap: any) => {
-        const raw = docSnap.data();
-        const id = String(raw?.id || docSnap.id || '').trim();
-        if (!raw || !id) return;
-        if (raw.isDeleted === true || raw.deletedAt) {
-          markDeletedId('leads', id);
-          return;
-        }
-        list.push({
-          ...raw,
-          id
-        } as Lead);
-      });
-    };
-    ingest(topSnap);
-    ingest(legacySnap);
-    ingest(wsSnap);
-    return mergeRecordsByKeySafely([], list, 'id', 'leads');
-  } catch (e) {
-    console.warn('Error fetching leads from Firestore:', e);
-    return [];
-  }
+  const master = await fetchMasterSnapshotFromFirestore();
+  return filterActiveRecords(Array.isArray(master?.leads) ? master.leads : [], 'leads', 'id');
 }
 
 export async function fetchBatchesFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
-  try {
-    const [wsSnap, topSnap] = await Promise.all([
-      getDocsWithLocationFallback(getColRef('batches'), 3000),
-      getDocsWithLocationFallback(collection(db, 'batches'), 3000)
-    ]);
-    const snap = wsSnap && !wsSnap.empty ? wsSnap : topSnap;
-    if (!snap || snap.empty) return [];
-    recordCloudReadSuccess();
-    const deletedIds = getDeletedIds('batches');
-    return snap.docs
-      .map((d: any) => ({ code: d.id, ...d.data() }))
-      .filter((item: any) => item && !item.isDeleted && !deletedIds.has(String(item.code || item.id)));
-  } catch (e) {
-    console.warn('Error fetching batches from Firestore:', e);
-    return [];
-  }
+  const master = await fetchMasterSnapshotFromFirestore();
+  return filterActiveRecords(Array.isArray(master?.batches) ? master.batches : [], 'batches', 'code');
 }
 
 export async function fetchStaffFromFirestore(): Promise<any[]> {
   if (!(await ensureAuthorizedSession())) return [];
-  try {
-    const [wsSnap, topSnap] = await Promise.all([
-      getDocsWithLocationFallback(getColRef('staff'), 3000),
-      getDocsWithLocationFallback(collection(db, 'staff'), 3000)
-    ]);
-    const snap = wsSnap && !wsSnap.empty ? wsSnap : topSnap;
-    if (!snap || snap.empty) return [];
-    recordCloudReadSuccess();
-    const deletedIds = getDeletedIds('staff');
-    return snap.docs
-      .map((d: any) => ({ id: d.id, ...d.data() }))
-      .filter((item: any) => item && !item.isDeleted && !deletedIds.has(String(item.id)));
-  } catch (e) {
-    console.warn('Error fetching staff from Firestore:', e);
-    return [];
-  }
+  const master = await fetchMasterSnapshotFromFirestore();
+  return filterActiveRecords(Array.isArray(master?.staff) ? master.staff : [], 'staff', 'id');
 }
 
 export async function fetchSettingsFromFirestore(): Promise<Record<string, any> | null> {
   if (!(await ensureAuthorizedSession())) return null;
-  try {
-    const snap = await getDocWithLocationFallback(doc(db, 'settings', 'institute_profile'), 3000);
-    if (snap && snap.exists()) {
-      recordCloudReadSuccess();
-      return snap.data();
-    }
-    return null;
-  } catch (e) {
-    console.warn('Error fetching settings from Firestore:', e);
-    return null;
-  }
+  const master = await fetchMasterSnapshotFromFirestore();
+  return master?.settings && typeof master.settings === 'object' ? master.settings : null;
 }
 
 /**
