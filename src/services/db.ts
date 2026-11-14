@@ -1274,12 +1274,12 @@ export async function dualWriteToCloud(
     // When not explicitly overwriting and not an incremental autoSave, pre-merge with remote Firestore so records added/edited on another device are never lost
     if (!isOverwrite && !skipPreFetch && (typeof navigator === 'undefined' || navigator.onLine)) {
       try {
-        const [remoteMaster, remoteSubStudents, remoteSubLeads] = await Promise.all([
-          fetchMasterSnapshotFromFirestore('institute_master_data'),
-          fetchStudentsFromFirestore(),
-          fetchLeadsFromFirestore()
-        ]);
+        const remoteMaster = await fetchMasterSnapshotFromFirestore('institute_master_data');
         const canonicalSnapshot = Number((remoteMaster as any)?.syncSchemaVersion || 0) >= 2;
+        // Never consult per-collection mirrors after the canonical full-state document exists.
+        const [remoteSubStudents, remoteSubLeads] = canonicalSnapshot
+          ? [[], []]
+          : await Promise.all([fetchStudentsFromFirestore(), fetchLeadsFromFirestore()]);
         const cloudMasterStudents = Array.isArray(remoteMaster?.students) ? remoteMaster!.students : [];
         const allRemoteStudents = canonicalSnapshot
           ? cloudMasterStudents
@@ -1441,15 +1441,18 @@ export async function masterFetchFromCloud(
       }
     }
 
-    // Always fetch master doc + students collection + leads collection + settings in parallel
-    const [masterDoc, remoteStudents, remoteLeads, remoteSettings] = await Promise.all([
-      fetchMasterInstituteFromFirestore('institute_master_data'),
-      fetchStudentsFromFirestore(),
-      fetchLeadsFromFirestore(),
-      fetchSettingsFromFirestore()
-    ]);
+    // Fetch the canonical snapshot first. Legacy per-collection mirrors are migration-only.
+    const masterDoc = await fetchMasterInstituteFromFirestore('institute_master_data');
+    const canonicalSnapshot = Boolean(masterDoc && Number((masterDoc as any).syncSchemaVersion || 0) >= 2);
+    const [remoteStudents, remoteLeads, remoteSettings] = canonicalSnapshot
+      ? [[], [], null]
+      : await Promise.all([
+          fetchStudentsFromFirestore(),
+          fetchLeadsFromFirestore(),
+          fetchSettingsFromFirestore()
+        ]);
 
-    const needAuxCollections = !masterDoc || !Array.isArray(masterDoc.batches);
+    const needAuxCollections = !canonicalSnapshot && (!masterDoc || !Array.isArray(masterDoc.batches));
     const [remoteBatches, remoteStaff, remoteCourses] = needAuxCollections
       ? await Promise.all([
           fetchBatchesFromFirestore(),
@@ -1458,7 +1461,6 @@ export async function masterFetchFromCloud(
         ])
       : [[], [], []];
 
-    const canonicalSnapshot = Boolean(masterDoc && Number((masterDoc as any).syncSchemaVersion || 0) >= 2);
     // Once the canonical full-state snapshot exists, it is authoritative. Older per-collection
     // mirrors are retained for backwards compatibility but must not resurrect stale records.
     const cleanSubStudents = canonicalSnapshot ? [] : filterActiveRecords(remoteStudents as any[], 'students', 'id');
