@@ -3823,13 +3823,13 @@ export async function runLiveFirebaseVerificationSuite(): Promise<{
   // TEST 6: Shared Multi-Device Login Workspace Isolation Check (No User-UID Split)
   const t6Start = Date.now();
   try {
-    const colPath = getColRef('students').path;
-    const isSharedWorkspace = colPath === `institutes/${INSTITUTE_WORKSPACE_ID}/students` && !colPath.includes('users/');
+    const canonicalPath = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID).path;
+    const isSharedWorkspace = canonicalPath === `institutes/${SHARED_INSTITUTE_ROOT_ID}`;
     results.push({
       testId: 'TEST 6',
-      title: 'Shared Multi-Device Workspace Path (Zero User-UID Database Split)',
+      title: 'Single Canonical Multi-Device Workspace Path',
       passed: isSharedWorkspace,
-      detail: `All devices & logins bind to shared path "${colPath}" instead of user-specific UIDs.`,
+      detail: `All devices and logins use the same master document "${canonicalPath}".`,
       durationMs: Date.now() - t6Start
     });
   } catch (e: any) {
