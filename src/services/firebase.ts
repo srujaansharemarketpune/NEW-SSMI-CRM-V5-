@@ -2088,7 +2088,8 @@ export async function updateCanonicalWorkspaceSettings(
   try {
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(masterRef);
-      const remote = snap.exists() ? snap.data() : {};
+      if (!snap.exists()) throw new Error('Canonical master snapshot is not initialized. Perform a full workspace sync first.');
+      const remote = snap.data();
       transaction.set(masterRef, {
         ...remote,
         settings: { ...(remote.settings || {}), ...patch },
@@ -2966,7 +2967,8 @@ export async function backupStudentData(
     let mergedStudents: Student[] = [];
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(masterRef);
-      const remote = snap.exists() ? snap.data() : {};
+      if (!snap.exists()) throw new Error('Canonical master snapshot is not initialized. Perform a full workspace sync first.');
+      const remote = snap.data();
       const remoteDeleted = (remote.deletedRecords || {}) as Partial<DeletedRecordsRegistry>;
       const localDeleted = readDeletedRegistry();
       const deletedRecords = {} as DeletedRecordsRegistry;
