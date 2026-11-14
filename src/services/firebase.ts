@@ -2077,6 +2077,35 @@ export async function upsertCanonicalWorkspaceRecord(
   }
 }
 
+/** Update shared institute settings inside the canonical workspace document. */
+export async function updateCanonicalWorkspaceSettings(
+  patch: Record<string, any>
+): Promise<boolean> {
+  if (!(await ensureAuthorizedSession())) return false;
+  const masterRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
+  const nowIso = new Date().toISOString();
+  try {
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(masterRef);
+      const remote = snap.exists() ? snap.data() : {};
+      transaction.set(masterRef, {
+        ...remote,
+        settings: { ...(remote.settings || {}), ...patch },
+        workspaceId: SHARED_INSTITUTE_ROOT_ID,
+        syncSchemaVersion: 2,
+        revision: Number(remote.revision || 0) + 1,
+        updatedAt: nowIso,
+        serverUpdatedAt: serverTimestamp()
+      }, { merge: false });
+    });
+    recordCloudWriteSuccess();
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'institutes/' + SHARED_INSTITUTE_ROOT_ID + '/settings');
+    return false;
+  }
+}
+
 /** Delete a record by recording a shared tombstone in the canonical master document. */
 export async function deleteCanonicalWorkspaceRecord(
   collectionName: keyof DeletedRecordsRegistry,
