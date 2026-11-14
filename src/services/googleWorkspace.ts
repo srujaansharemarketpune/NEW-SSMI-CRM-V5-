@@ -7,7 +7,7 @@ import { Lead, Student, Batch, AppState } from '../types';
 function extractGoogleFormId(input: string): string {
   const value = String(input || '').trim();
   if (!value) throw new Error('Please provide a Google Form URL or ID.');
-  const match = value.match(/\\/forms\\/d\\/(?:e\\/)?([^/?#]+)/i);
+  const match = value.match(/\/forms\/d\/(?:e\/)?([^/?#]+)/i);
   const id = match?.[1] || value.split(/[/?#]/)[0];
   if (!id || id.length < 10) throw new Error('The Google Form URL or ID is invalid.');
   return id;
