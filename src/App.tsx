@@ -485,9 +485,6 @@ export default function App() {
 
     const unsubscribe = subscribeToCloudUpdates('institute_master_data', (remoteData, hasPendingWrites) => {
       if (hasPendingWrites || !remoteData) return;
-      // Never replace a local edit that has not yet been acknowledged by the canonical cloud write.
-      if (hasUnsyncedLocalChangesRef.current) return;
-
       // Ignore self-originated echoes while local debounce is still settling
       const isSameDevice = remoteData.deviceId && remoteData.deviceId === getLocalDeviceId();
       if (isSameDevice && Date.now() - lastLocalMutationAtRef.current < 6000) {
