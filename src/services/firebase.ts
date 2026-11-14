@@ -1276,7 +1276,6 @@ function computeSyncStatusSnapshot(): SyncStatusSnapshot {
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
   const realUser = auth.currentUser;
   const isLiveFirebaseAuth = Boolean(realUser && isAuthorizedUser(realUser));
-  const crmSession = loadCrmUserSession();
   const isAuthValid = isLiveFirebaseAuth;
   const pendingOps = getPendingSyncOperations().length;
   const totalPending = Math.max(diagPendingWritesCount, pendingOps);
@@ -1377,21 +1376,6 @@ export function recordSyncError(message: string | null, errorObj?: any) {
     diagErrorCategory = null;
     diagLastSyncError = null;
     diagSyncState = diagCloudConnected ? 'Connected' : 'Pending';
-    notifySyncStatusListeners();
-    return;
-  }
-
-  // When running seamlessly under the pre-connected local Master Admin session (no popup token yet),
-  // keep local IndexedDB persistence active without showing a red error badge for background auth/rule checks.
-  const isPreConnectedLocal = Boolean(!auth.currentUser && loadCrmUserSession()?.isAuthenticated);
-  const isAuthTokenNotice =
-    classified.category === 'permission-denied' ||
-    String(classified.code || '').startsWith('auth/') ||
-    String(message).toLowerCase().includes('api key');
-  if (isPreConnectedLocal && isAuthTokenNotice) {
-    diagErrorCategory = null;
-    diagLastSyncError = null;
-    diagSyncState = 'Connected';
     notifySyncStatusListeners();
     return;
   }
@@ -2165,11 +2149,16 @@ export async function upsertCanonicalWorkspaceRecord(
       const merged = collectionName === 'students'
         ? mergeStudentsSafely(existing as Student[], [incoming as unknown as Student])
         : mergeRecordsByKeySafely(existing, [incoming], keyField, collectionName);
-      const deletedRecords = { ...readDeletedRegistry(), ...(remote.deletedRecords || {}) } as DeletedRecordsRegistry;
-      deletedRecords[collectionName] = (deletedRecords[collectionName] || []).filter(id => String(id) !== recordId);
+      const localDeleted = readDeletedRegistry();
+      const remoteDeleted = (remote.deletedRecords || {}) as Partial<DeletedRecordsRegistry>;
+      const deletedRecords = {} as DeletedRecordsRegistry;
+      (['students', 'leads', 'batches', 'staff', 'courses'] as (keyof DeletedRecordsRegistry)[]).forEach((key) => {
+        deletedRecords[key] = Array.from(new Set([...(localDeleted[key] || []), ...(remoteDeleted[key] || [])]));
+      });
+      deletedRecords[collectionName] = deletedRecords[collectionName].filter(id => String(id) !== recordId);
       transaction.set(masterRef, {
         ...remote,
-        [collectionName]: merged.filter((item: any) => String(item?.[keyField] || item?.id || '') !== recordId || !deletedRecords[collectionName].includes(recordId)),
+        [collectionName]: merged.filter((item: any) => !deletedRecords[collectionName].includes(String(item?.[keyField] || item?.id || ''))),
         deletedRecords,
         workspaceId: SHARED_INSTITUTE_ROOT_ID,
         syncSchemaVersion: 2,
@@ -2202,7 +2191,12 @@ export async function deleteCanonicalWorkspaceRecord(
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(masterRef);
       const remote = snap.exists() ? snap.data() : {};
-      const deletedRecords = { ...readDeletedRegistry(), ...(remote.deletedRecords || {}) } as DeletedRecordsRegistry;
+      const localDeleted = readDeletedRegistry();
+      const remoteDeleted = (remote.deletedRecords || {}) as Partial<DeletedRecordsRegistry>;
+      const deletedRecords = {} as DeletedRecordsRegistry;
+      (['students', 'leads', 'batches', 'staff', 'courses'] as (keyof DeletedRecordsRegistry)[]).forEach((key) => {
+        deletedRecords[key] = Array.from(new Set([...(localDeleted[key] || []), ...(remoteDeleted[key] || [])]));
+      });
       deletedRecords[collectionName] = Array.from(new Set([...(deletedRecords[collectionName] || []), cleanId]));
       const existing = Array.isArray(remote[collectionName]) ? remote[collectionName] : [];
       transaction.set(masterRef, {
@@ -2237,7 +2231,6 @@ export function clearAllDeletedTombstones(): void {
 export function getSyncDiagnosticsReport(): SyncDiagnosticsReport {
   const realUser = auth.currentUser;
   const crmSession = loadCrmUserSession();
-  const hasPreConnected = Boolean(crmSession?.isAuthenticated && isAuthorizedAdminEmail(crmSession.email));
   const isLiveToken = Boolean(realUser && isAuthorizedUser(realUser));
   const reg = readDeletedRegistry();
   const tombstoneCount =
