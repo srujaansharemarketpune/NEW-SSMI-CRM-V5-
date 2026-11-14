@@ -807,56 +807,75 @@ export async function recordSafePayment({
   paymentMode?: string;
   remarks?: string;
 }): Promise<{ paymentDocId: string; newPaid: number; newPending: number }> {
+  if (!(await ensureAuthorizedSession())) throw new Error('Real Firebase sign-in is required.');
+  if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) throw new Error('Payment amount must be greater than zero.');
   const safeReceipt = (receiptNo || `RCP-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_');
   const paymentDocId = `PAY_${studentId}_${safeReceipt}`;
-  const paymentRef = getInstituteDocRef('payments', paymentDocId);
-  const studentWorkspaceRef = getInstituteDocRef('students', studentId);
-  const studentTopRef = doc(db, 'students', String(studentId));
+  const masterRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
+  const nowIso = new Date().toISOString();
 
-  const res = await runTransaction(db, async (transaction) => {
-    let studentSnap = await transaction.get(studentWorkspaceRef);
-    let targetStudentRef = studentWorkspaceRef;
-    if (!studentSnap.exists()) {
-      studentSnap = await transaction.get(studentTopRef);
-      targetStudentRef = studentTopRef;
-    }
-    if (!studentSnap.exists()) {
-      throw new Error(`Student ${studentId} does not exist in central institute database.`);
+  const result = await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(masterRef);
+    if (!snap.exists()) throw new Error('The canonical institute workspace does not exist yet.');
+    const remote = snap.data();
+    const students: Student[] = Array.isArray(remote.students) ? remote.students : [];
+    const index = students.findIndex(student => String(student.id) === String(studentId));
+    if (index < 0) throw new Error(`Student ${studentId} does not exist in the shared institute workspace.`);
+
+    const payments = Array.isArray(remote.payments) ? remote.payments : [];
+    const existingPayment = payments.find((payment: any) => String(payment.id || payment.paymentId) === paymentDocId);
+    const student = students[index] as any;
+    if (existingPayment) {
+      const paid = Number(student.feesPaid || student.paidFees || 0);
+      const total = Number(student.totalFees || student.netFee || 0);
+      return { paymentDocId, newPaid: paid, newPending: Math.max(0, total - paid) };
     }
 
-    const currentData = studentSnap.data() || {};
-    const currentPaid = Number(currentData.feesPaid || 0);
-    const totalFees = Number(currentData.totalFees || currentData.netFee || 0);
+    const currentPaid = Number(student.feesPaid || student.paidFees || 0);
+    const totalFees = Number(student.totalFees || student.netFee || student.grossFee || 0);
     const newPaid = currentPaid + Number(amount);
     const newPending = Math.max(0, totalFees - newPaid);
-
-    transaction.set(paymentRef, sanitizeForFirestore({
-      paymentId: paymentDocId,
-      studentId,
-      studentName: currentData.name || 'Unknown',
-      amount: Number(amount),
-      receiptNo: receiptNo || `RCP-${Date.now()}`,
-      paymentMode: paymentMode || 'UPI/Cash',
-      remarks: remarks || '',
-      workspaceId: INSTITUTE_WORKSPACE_ID,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    }));
-
-    transaction.update(targetStudentRef, {
+    const updatedStudent = {
+      ...student,
       feesPaid: newPaid,
       pendingFees: newPending,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso
+    };
+    const nextStudents = students.map((item, i) => i === index ? updatedStudent : item);
+    const paymentRecord = {
+      id: paymentDocId,
+      paymentId: paymentDocId,
+      studentId,
+      studentName: student.name || 'Unknown',
+      amount: Number(amount),
+      receiptNo: receiptNo || safeReceipt,
+      paymentMode: paymentMode || 'UPI/Cash',
+      remarks: remarks || '',
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    const nextPayments = [...payments, paymentRecord];
+    const fees = buildFeeLedgerFromStudents(nextStudents);
+
+    transaction.set(masterRef, {
+      ...remote,
+      students: nextStudents,
+      payments: nextPayments,
+      fees,
+      fee_ledger: fees,
+      workspaceId: SHARED_INSTITUTE_ROOT_ID,
+      syncSchemaVersion: 2,
+      revision: Number(remote.revision || 0) + 1,
+      updatedAt: nowIso,
       serverUpdatedAt: serverTimestamp()
-    });
+    }, { merge: false });
 
     return { paymentDocId, newPaid, newPending };
   });
 
   recordCloudWriteSuccess();
-  return res;
+  return result;
 }
-
 export {
   enableNetwork,
   disableNetwork,
