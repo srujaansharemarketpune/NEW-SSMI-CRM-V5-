@@ -715,7 +715,7 @@ export default function App() {
             ...prev,
             syncQueue: prev.syncQueue.map(q => ({ ...q, status: 'Synced to Cloud' }))
           }));
-          showToast('🌐 Back online! Offline changes automatically synchronized to Cloud & Firebase.');
+          showToast('🌐 Back online! Changes synchronized to the shared Firebase workspace.');
         }
       } catch (err) {
         console.warn('Online reconnect sync warning:', err);
@@ -781,7 +781,7 @@ export default function App() {
     };
   }, []);
 
-  // Automatic 2-Minute Background Cloud & Firebase Sync Loop
+  // Automatic 2-Minute Background Shared Firebase Sync Loop
   useEffect(() => {
     const intervalMs = state.settings.cloudConfig?.autoSyncIntervalMs || 120000; // Default: 2 minutes (120,000 ms)
     const timer = window.setInterval(async () => {
@@ -897,7 +897,7 @@ export default function App() {
         module: category,
         operation: action,
         summary: `${recordId}: ${details}`.slice(0, 100),
-        status: isOnline ? 'Synced (Dual-Write)' : 'Queued for Cloud'
+        status: isOnline ? 'Pending Shared Firebase Sync' : 'Queued for Shared Firebase Sync'
       };
       return {
         ...prev,
@@ -4356,7 +4356,7 @@ export default function App() {
     }
   };
 
-  // Master Fetch & Apply from Cloud & Firebase (Pulls latest state, merges newer records & refreshes UI)
+  // Master Fetch & Apply from the shared Firebase workspace
   const handleMasterFetchFromCloud = async (interactiveAuth = false, silentOnLogin = false, timeoutMs = 20000) => {
     setIsCloudSyncing(true);
     const emergencyResetTimer = setTimeout(() => {
