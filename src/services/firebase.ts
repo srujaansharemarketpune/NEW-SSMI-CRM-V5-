@@ -1469,10 +1469,6 @@ export interface FirebaseCriticalErrorDetail {
 }
 
 export function emitFirebaseCriticalError(detail: FirebaseCriticalErrorDetail): void {
-  if (!auth.currentUser && loadCrmUserSession()?.isAuthenticated) {
-    console.warn('[Firebase Auth Notice - Suppressed Overlay]:', detail.code, detail.title);
-    return;
-  }
   console.error('[Firebase Critical Error]:', detail.code, detail.title, detail.message);
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     try {
