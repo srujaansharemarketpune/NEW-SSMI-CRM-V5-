@@ -159,6 +159,7 @@ export default function App() {
   const [userRole, setUserRole] = useState<'admin' | 'operator' | null>(() => initialAuthRef.current?.role ?? null);
   const [authInitializing, setAuthInitializing] = useState<boolean>(false);
   const [isLocalStateReady, setIsLocalStateReady] = useState(false);
+  const isLocalStateReadyRef = useRef(false);
   const isSharedWorkspaceHydratedRef = useRef(false);
   const [redirectAuthError, setRedirectAuthError] = useState<FormattedFirebaseAuthError | null>(null);
   const authEmailRef = useRef<string | null>(
@@ -596,6 +597,7 @@ export default function App() {
       const quota = await checkStorageQuota(loaded);
       setStorageQuota(quota);
 
+      isLocalStateReadyRef.current = true;
       setIsLocalStateReady(true);
     }
     init();
@@ -603,6 +605,8 @@ export default function App() {
     // Online / Offline listeners with automatic cloud flush and bidirectional reconciliation on reconnection
     const handleOnline = async () => {
       setIsOnline(true);
+      if (!isLocalStateReadyRef.current) return;
+      if (!isSharedWorkspaceHydratedRef.current && !hasUnsyncedLocalChangesRef.current) return;
       try {
         const res = await dualWriteToCloud(stateRef.current, { interactiveAuth: false });
         if (res.ok) {
