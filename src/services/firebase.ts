@@ -4255,135 +4255,33 @@ export async function pushAllStudentsStrictToFirestore(
   state?: AppState
 ): Promise<StrictStudentSyncResult> {
   const timestamp = new Date().toLocaleString('en-IN', { hour12: false });
-  const currentUser = auth.currentUser;
-
-  if (!currentUser || !isAuthorizedUser(currentUser)) {
-    const errMsg =
-      'Google OAuth popup token needed for direct server push (pre-connected local cache is active). Click "Sign in with Google" to attach your Google token.';
-    recordSyncError(errMsg, { code: 'unauthenticated' });
-    return {
-      ok: false,
-      syncedCount: 0,
-      timestamp,
-      errorCode: 'unauthenticated',
-      errorMessage: errMsg
-    };
+  if (!(await ensureAuthorizedSession())) {
+    const errorMessage = 'Real Google/Firebase sign-in is required before cloud sync.';
+    recordSyncError(errorMessage, { code: 'unauthenticated' });
+    return { ok: false, syncedCount: 0, timestamp, errorCode: 'unauthenticated', errorMessage };
   }
-
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    const errMsg = 'Offline: Device has no internet connection. Student records are safely cached in LocalStorage.';
-    return {
-      ok: false,
-      syncedCount: 0,
-      timestamp,
-      errorCode: 'unavailable',
-      errorMessage: errMsg
-    };
+    const errorMessage = 'Offline: records are saved locally but are not yet in shared cloud storage.';
+    return { ok: false, syncedCount: 0, timestamp, errorCode: 'unavailable', errorMessage };
   }
 
   setSyncEngineWorking(true);
   try {
-    await currentUser.getIdToken(true);
-    const deletedStudentIds = getDeletedIds('students');
-    const activeStudents = (students || []).filter(
-      (s) => s && !(s as any).isDeleted && !deletedStudentIds.has(String(s.id || '').trim())
-    );
-
-    const nowIso = new Date().toISOString();
-    const safeNum = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-
-    // Push in Firestore batches (up to 150 docs per batch because we write canonical workspace + master/summary)
-    const CHUNK_SIZE = 150;
-    let totalSynced = 0;
-
-    for (let i = 0; i < activeStudents.length; i += CHUNK_SIZE) {
-      const chunk = activeStudents.slice(i, i + CHUNK_SIZE);
-      const batch = writeBatch(db);
-      for (const s of chunk) {
-        const safeId = toSafeDocId(s.id);
-        const payload = sanitizeForFirestore({
-          id: String(s.id).slice(0, 128),
-          regId: String(s.regId || '').slice(0, 64),
-          leadId: s.leadId ? String(s.leadId).slice(0, 64) : '',
-          name: String(s.name || '').slice(0, 128),
-          phone: String(s.phone || '').slice(0, 32),
-          whatsapp: String(s.whatsapp || '').slice(0, 32),
-          email: String(s.email || '').slice(0, 128),
-          address: String(s.address || '').slice(0, 500),
-          course: String(s.course || '').slice(0, 128),
-          batch: String(s.batch || '').slice(0, 64),
-          status: String(s.status || 'Active').slice(0, 32),
-          source: String(s.source || 'Direct').slice(0, 64),
-          netFee: safeNum(s.netFee),
-          grossFee: safeNum(s.grossFee),
-          discount: safeNum(s.discount),
-          enrollDate: String(s.enrollDate || '').slice(0, 32),
-          joinDate: String(s.joinDate || s.enrollDate || '').slice(0, 32),
-          docs: String(s.docs || '').slice(0, 500),
-          notes: String(s.notes || '').slice(0, 1900),
-          milestones: Array.isArray(s.milestones) ? s.milestones.slice(0, 100) : [],
-          isDeleted: false,
-          workspaceId: SHARED_INSTITUTE_ROOT_ID,
-          updatedAt: (s as any).updatedAt || nowIso,
-          serverUpdatedAt: serverTimestamp()
-        });
-        batch.set(getInstituteDocRef('students', safeId), payload, { merge: true });
-        batch.set(doc(db, 'students', safeId), payload, { merge: true });
-        syncedRecordHashes.students.set(safeId, computeRecordHash(payload));
-        totalSynced++;
-      }
-      await batch.commit();
-    }
-
-    // Also update the institute master document so real-time listeners across devices receive the full student array
-    const feeLedger = buildFeeLedgerFromStudents(activeStudents);
-    const masterDocPayload = sanitizeForFirestore({
-      students: activeStudents,
-      fees: feeLedger,
-      fee_ledger: feeLedger,
-      ...(state
-        ? {
-            leads: Array.isArray(state.leads) ? state.leads : [],
-            batches: Array.isArray(state.batches) ? state.batches : [],
-            courses: Array.isArray(state.courses) ? state.courses : [],
-            staff: Array.isArray(state.staff) ? state.staff : [],
-            settings: compactSettingsForMasterDoc(state.settings)
-          }
-        : {}),
-      deletedRecords: readDeletedRegistry(),
-      deviceId: getLocalDeviceId(),
-      workspaceId: SHARED_INSTITUTE_ROOT_ID,
-      updatedBy: currentUser.email || PRIMARY_ADMIN_EMAIL,
-      updatedAt: nowIso,
-      serverUpdatedAt: serverTimestamp()
-    });
-
-    await Promise.all([
-      setDoc(doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID), masterDocPayload, { merge: true }),
-      setDoc(doc(db, 'institutes', 'institute_master_data'), masterDocPayload, { merge: true })
-    ]);
-
-    recordCloudWriteSuccess(true);
+    const ok = state
+      ? await autoSaveToFirestoreMaster({ ...state, students }, 'institute_master_data', false)
+      : (await backupStudentData(students)).success;
+    if (!ok) throw new Error('Canonical Firestore workspace write failed.');
     return {
       ok: true,
-      syncedCount: totalSynced,
+      syncedCount: (students || []).filter(student => student && !(student as any).isDeleted).length,
       timestamp
     };
-  } catch (err: any) {
-    const code = String(err?.code || 'firestore-error').trim();
-    const rawMsg = String(err?.message || err || 'Firestore write blocked or failed.').trim();
-    const exactMessage = `[${code}]: ${rawMsg}`;
-    recordSyncError(exactMessage, err);
-    return {
-      ok: false,
-      syncedCount: 0,
-      timestamp,
-      errorCode: code,
-      errorMessage: exactMessage
-    };
+  } catch (error: any) {
+    const code = String(error?.code || 'firestore-error').trim();
+    const errorMessage = `[${code}]: ${String(error?.message || error || 'Firestore write failed.').trim()}`;
+    recordSyncError(errorMessage, error);
+    return { ok: false, syncedCount: 0, timestamp, errorCode: code, errorMessage };
   } finally {
     setSyncEngineWorking(false);
   }
 }
-
-
