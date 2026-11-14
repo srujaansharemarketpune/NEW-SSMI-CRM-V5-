@@ -709,8 +709,15 @@ export async function saveStudentToFirestore(student: Student): Promise<boolean>
     const nowIso = (student as any).updatedAt || new Date().toISOString();
     const safeId = String(student.id).trim();
     const sharedRef = getDocRef('students', safeId);
+    const sharedAdmRef = getDocRef('admissions', safeId);
     const legacyRef = getLegacyDocRef('students', safeId);
     const topLevelRef = doc(db, 'students', safeId);
+    const topLevelAdmRef = doc(db, 'admissions', safeId);
+    const paidFees = Array.isArray(student.milestones)
+      ? student.milestones.filter(m => m.status === 'Paid').reduce((acc, m) => acc + (Number(m.amount) || 0), 0)
+      : Number((student as any).paidFees ?? (student as any).feesPaid ?? 0);
+    const totalFees = Number(student.netFee || student.grossFee || 0);
+    const pendingFees = Math.max(0, totalFees - paidFees);
     const firestoreData = {
       id: safeId.slice(0, 128),
       regId: String(student.regId || '').slice(0, 64),
@@ -723,9 +730,12 @@ export async function saveStudentToFirestore(student: Student): Promise<boolean>
       batch: String(student.batch || '').slice(0, 64),
       status: student.status || 'Active',
       source: String(student.source || 'Direct').slice(0, 64),
-      netFee: Number(student.netFee) || 0,
-      grossFee: Number(student.grossFee) || 0,
+      netFee: totalFees,
+      grossFee: Number(student.grossFee) || totalFees,
       discount: Number(student.discount) || 0,
+      totalFees,
+      feesPaid: paidFees,
+      pendingFees,
       enrollDate: String(student.enrollDate || '').slice(0, 32),
       joinDate: String(student.joinDate || student.enrollDate || '').slice(0, 32),
       docs: String(student.docs || '').slice(0, 256),
@@ -739,8 +749,10 @@ export async function saveStudentToFirestore(student: Student): Promise<boolean>
     };
     await Promise.all([
       setDoc(sharedRef, firestoreData, { merge: true }),
+      setDoc(sharedAdmRef, firestoreData, { merge: true }),
       setDoc(legacyRef, firestoreData, { merge: true }),
-      setDoc(topLevelRef, firestoreData, { merge: true })
+      setDoc(topLevelRef, firestoreData, { merge: true }),
+      setDoc(topLevelAdmRef, firestoreData, { merge: true })
     ]);
     recordCloudWriteSuccess();
     return true;
@@ -751,7 +763,7 @@ export async function saveStudentToFirestore(student: Student): Promise<boolean>
 }
 
 /**
- * Tier 2: Firebase Firestore Lead Mutations (Shared Path: `institutes/srujaan_share_market_pune/leads`)
+ * Tier 2: Firebase Firestore Lead Mutations (Shared Path: `institutes/srujaan_share_market_pune/leads` & `inquiries`)
  */
 export async function saveLeadToFirestore(lead: Lead): Promise<boolean> {
   unmarkDeletedId('leads', lead.id);
@@ -762,8 +774,10 @@ export async function saveLeadToFirestore(lead: Lead): Promise<boolean> {
     const nowIso = (lead as any).updatedAt || new Date().toISOString();
     const safeId = String(lead.id).trim();
     const sharedRef = getDocRef('leads', safeId);
+    const sharedInqRef = getDocRef('inquiries', safeId);
     const legacyRef = getLegacyDocRef('leads', safeId);
     const topLevelRef = doc(db, 'leads', safeId);
+    const topLevelInqRef = doc(db, 'inquiries', safeId);
     const firestoreData = {
       id: safeId.slice(0, 128),
       name: String(lead.name || '').slice(0, 128),
@@ -790,8 +804,10 @@ export async function saveLeadToFirestore(lead: Lead): Promise<boolean> {
     };
     await Promise.all([
       setDoc(sharedRef, firestoreData, { merge: true }),
+      setDoc(sharedInqRef, firestoreData, { merge: true }),
       setDoc(legacyRef, firestoreData, { merge: true }),
-      setDoc(topLevelRef, firestoreData, { merge: true })
+      setDoc(topLevelRef, firestoreData, { merge: true }),
+      setDoc(topLevelInqRef, firestoreData, { merge: true })
     ]);
     recordCloudWriteSuccess();
     return true;
@@ -819,8 +835,10 @@ export async function deleteStudentFromFirestore(studentId: string): Promise<boo
     };
     await Promise.all([
       setDoc(getDocRef('students', safeId), tombstonePayload, { merge: true }),
+      setDoc(getDocRef('admissions', safeId), tombstonePayload, { merge: true }),
       setDoc(getLegacyDocRef('students', safeId), tombstonePayload, { merge: true }),
-      setDoc(doc(db, 'students', safeId), tombstonePayload, { merge: true })
+      setDoc(doc(db, 'students', safeId), tombstonePayload, { merge: true }),
+      setDoc(doc(db, 'admissions', safeId), tombstonePayload, { merge: true })
     ]);
     recordCloudWriteSuccess();
     return true;

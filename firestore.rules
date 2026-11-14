@@ -48,6 +48,7 @@ service cloud.firestore {
     function isAllowedWorkspace(instituteId) {
       return instituteId == 'ssm_pune_main'
         || instituteId == 'srujaan_share_market_pune'
+        || instituteId == 'srujaansharemarketpune_gmail_com'
         || instituteId == 'institute_master_data';
     }
 
@@ -375,11 +376,25 @@ service cloud.firestore {
         allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(studentId);
       }
 
+      match /admissions/{admissionId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(admissionId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(admissionId) && isValidStudent(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(admissionId);
+      }
+
       match /leads/{leadId} {
         allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(leadId);
         allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
         allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(leadId) && isValidLead(incoming());
         allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(leadId);
+      }
+
+      match /inquiries/{inquiryId} {
+        allow get: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(inquiryId);
+        allow list: if isAuthorizedUser() && isAllowedWorkspace(instituteId);
+        allow create, update: if isAuthorizedUser() && isAllowedWorkspace(instituteId) && isValidId(inquiryId) && isValidLead(incoming());
+        allow delete: if isMasterAdmin() && isAllowedWorkspace(instituteId) && isValidId(inquiryId);
       }
 
       match /batches/{batchCode} {
@@ -473,6 +488,13 @@ service cloud.firestore {
       allow list: if isAuthorizedUser();
       allow create, update: if isAuthorizedUser() && isValidId(studentId) && isValidStudent(incoming());
       allow delete: if isMasterAdmin() && isValidId(studentId);
+    }
+
+    match /admissions/{admissionId} {
+      allow get: if isAuthorizedUser() && isValidId(admissionId);
+      allow list: if isAuthorizedUser();
+      allow create, update: if isAuthorizedUser() && isValidId(admissionId) && isValidStudent(incoming());
+      allow delete: if isMasterAdmin() && isValidId(admissionId);
     }
 
     match /leads/{leadId} {

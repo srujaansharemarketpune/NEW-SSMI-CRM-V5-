@@ -375,6 +375,11 @@ export interface InstituteSettings {
   appsScriptLibraryUrl?: string;
   lastUpdated?: string;
   googleConnected?: boolean;
+  aiConfig?: {
+    preferredModel?: 'gemini-2.5-flash' | 'gemini-3.8-flash' | 'gemini-3.1-flash-lite' | 'gemini-2.5-flash-lite';
+    enableGoogleSearch?: boolean;
+    enableAutoFallback?: boolean;
+  };
 }
 
 export interface UnifiedInstituteDB {

@@ -3301,8 +3301,10 @@ export async function deleteLeadFromFirestore(leadId: string): Promise<boolean> 
     };
     await Promise.all([
       withTimeout(setDoc(getInstituteDocRef('leads', safeId), tombstonePayload, { merge: true }), 5000, undefined),
+      withTimeout(setDoc(getInstituteDocRef('inquiries', safeId), tombstonePayload, { merge: true }), 5000, undefined),
       withTimeout(setDoc(getLegacyDocRef('leads', safeId), tombstonePayload, { merge: true }), 5000, undefined),
-      withTimeout(setDoc(doc(db, 'leads', safeId), tombstonePayload, { merge: true }), 5000, undefined)
+      withTimeout(setDoc(doc(db, 'leads', safeId), tombstonePayload, { merge: true }), 5000, undefined),
+      withTimeout(setDoc(doc(db, 'inquiries', safeId), tombstonePayload, { merge: true }), 5000, undefined)
     ]);
     recordCloudWriteSuccess();
     return true;

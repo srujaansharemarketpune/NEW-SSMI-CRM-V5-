@@ -335,9 +335,17 @@
       "schema": "Student",
       "description": "Canonical student records collection inside the shared workspace"
     },
+    "/institutes/{instituteId}/admissions/{admissionId}": {
+      "schema": "Student",
+      "description": "Canonical student admissions collection inside the shared workspace"
+    },
     "/institutes/{instituteId}/leads/{leadId}": {
       "schema": "Lead",
       "description": "Canonical CRM prospect leads collection inside the shared workspace"
+    },
+    "/institutes/{instituteId}/inquiries/{inquiryId}": {
+      "schema": "Lead",
+      "description": "Canonical CRM inquiries collection inside the shared workspace"
     },
     "/institutes/{instituteId}/batches/{batchCode}": {
       "schema": "Batch",
@@ -394,6 +402,10 @@
     "/students/{studentId}": {
       "schema": "Student",
       "description": "Legacy top-level student records (read/migration compatibility)"
+    },
+    "/admissions/{admissionId}": {
+      "schema": "Student",
+      "description": "Top-level student admissions records"
     },
     "/leads/{leadId}": {
       "schema": "Lead",

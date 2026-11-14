@@ -3051,6 +3051,94 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {/* Gemini AI Admin Agent Model & Grounding Configuration */}
+                <div className="pt-4 border-t border-slate-100 space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <h3 className="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>🤖 Gemini AI Admin Agent — Model &amp; Fallback Configuration</span>
+                      </h3>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Configure the primary Google Gemini model, automatic free-tier fallback chain, and live Google Search grounding for the CRM Admin Agent.
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-black">
+                      Admin: srujaansharemarketpune@gmail.com
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-black text-slate-700 uppercase tracking-wide">
+                        Preferred Primary Gemini Model
+                      </label>
+                      <select
+                        value={formData.aiConfig?.preferredModel || 'gemini-2.5-flash'}
+                        onChange={(e) => {
+                          const preferredModel = e.target.value as NonNullable<typeof formData.aiConfig>['preferredModel'];
+                          updateField('aiConfig', {
+                            preferredModel,
+                            enableGoogleSearch: formData.aiConfig?.enableGoogleSearch ?? true,
+                            enableAutoFallback: formData.aiConfig?.enableAutoFallback ?? true
+                          });
+                        }}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended • Fast + Tools)</option>
+                        <option value="gemini-3.8-flash">Gemini 3.8 Flash (Advanced Multi-Step Reasoning)</option>
+                        <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (High-Throughput Free Tier)</option>
+                        <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Ultra-Low Latency)</option>
+                      </select>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+                      <div>
+                        <span className="text-xs font-black text-slate-900 block">
+                          Live Google Search Grounding
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          Grounds Nifty/Sensex/SEBI &amp; world queries in live Google Search.
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={formData.aiConfig?.enableGoogleSearch ?? true}
+                        onChange={(e) => {
+                          updateField('aiConfig', {
+                            preferredModel: formData.aiConfig?.preferredModel || 'gemini-2.5-flash',
+                            enableGoogleSearch: e.target.checked,
+                            enableAutoFallback: formData.aiConfig?.enableAutoFallback ?? true
+                          });
+                        }}
+                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+                      <div>
+                        <span className="text-xs font-black text-slate-900 block">
+                          Auto-Fallback Model Chain
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          Automatically cascades across Flash &amp; Flash-Lite on rate limits.
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={formData.aiConfig?.enableAutoFallback ?? true}
+                        onChange={(e) => {
+                          updateField('aiConfig', {
+                            preferredModel: formData.aiConfig?.preferredModel || 'gemini-2.5-flash',
+                            enableGoogleSearch: formData.aiConfig?.enableGoogleSearch ?? true,
+                            enableAutoFallback: e.target.checked
+                          });
+                        }}
+                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Master Backup & Restore Engine */}

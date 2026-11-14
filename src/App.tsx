@@ -96,6 +96,9 @@ import {
   ChatMessage,
   AgentStoreActions,
   resolveEntityRecord,
+  findAllMatchingEntities,
+  resolveSsmiCourseAndFee,
+  getStudentAttendancePct,
   executeClientToolCall
 } from './services/gemini';
 import {
@@ -2296,6 +2299,7 @@ export default function App() {
     searchRecords: async (query, entityType = 'all') => {
       const current = stateRef.current;
       const q = String(query || '').trim().toLowerCase();
+      const qCourseAlias = q.replace(/\badvanced\b/g, 'advance').replace(/\bmaster\b/g, 'complete');
       const matchedStudents =
         entityType === 'inquiries'
           ? []
@@ -2307,7 +2311,11 @@ export default function App() {
                 s.id.toLowerCase().includes(q) ||
                 s.phone.includes(q) ||
                 s.course.toLowerCase().includes(q) ||
-                (s.batch || '').toLowerCase().includes(q)
+                s.course.toLowerCase().includes(qCourseAlias) ||
+                (s.batch || '').toLowerCase().includes(q) ||
+                (s.address || '').toLowerCase().includes(q) ||
+                (s.status || '').toLowerCase().includes(q) ||
+                (s.source || '').toLowerCase().includes(q)
             );
       const matchedInquiries =
         entityType === 'students'
@@ -2319,31 +2327,35 @@ export default function App() {
                 l.id.toLowerCase().includes(q) ||
                 l.phone.includes(q) ||
                 l.course.toLowerCase().includes(q) ||
-                l.stage.toLowerCase().includes(q)
+                l.course.toLowerCase().includes(qCourseAlias) ||
+                l.stage.toLowerCase().includes(q) ||
+                (l.locality || '').toLowerCase().includes(q) ||
+                (l.source || '').toLowerCase().includes(q) ||
+                (l.notes || '').toLowerCase().includes(q)
             );
 
-      const studentLines = matchedStudents.slice(0, 10).map(s => {
+      const studentLines = matchedStudents.slice(0, 12).map(s => {
         const paid = (s.milestones || [])
           .filter(m => m.status === 'Paid')
           .reduce((sum, m) => sum + m.amount, 0);
         const due = Math.max(0, s.netFee - paid);
-        return `- **${s.name}** (\`${s.regId}\`) • Course: **${s.course}** • Batch: \`${s.batch || 'Unassigned'}\` • Phone: \`${s.phone}\` • Paid: **₹${paid.toLocaleString('en-IN')}** (Due: ₹${due.toLocaleString('en-IN')}) • Status: **${s.status}**`;
+        return `- **${s.name}** (\`${s.regId}\`) • Course: **${s.course}** • Batch: \`${s.batch || 'Unassigned'}\` • Phone: \`${s.phone || 'Not provided'}\` • Paid: **₹${paid.toLocaleString('en-IN')}** (Due: ₹${due.toLocaleString('en-IN')}) • Status: **${s.status}**`;
       });
 
-      const inquiryLines = matchedInquiries.slice(0, 10).map(
+      const inquiryLines = matchedInquiries.slice(0, 12).map(
         l =>
-          `- **${l.name}** (\`${l.id}\`) • Course: **${l.course}** • Stage: **${l.stage}** • Phone: \`${l.phone}\` • Follow-up: \`${l.followUpDate || 'N/A'}\``
+          `- **${l.name}** (\`${l.id}\`) • Course: **${l.course}** • Stage: **${l.stage}** • Locality: **${l.locality || 'Pune'}** • Phone: \`${l.phone || 'Not provided'}\` • Follow-up: \`${l.followUpDate || 'N/A'}\``
       );
 
       if (studentLines.length === 0 && inquiryLines.length === 0) {
         return {
           success: true,
           records: [],
-          summary: `### 🔍 Search Results for "${query}"\nNo matching student or inquiry records were found.`
+          summary: `### 🔍 Search Results for "${query}"\nNo matching student or inquiry records were found in the CRM database.`
         };
       }
 
-      const sections: string[] = [`### 🔍 Search Results for "${query}"`];
+      const sections: string[] = [`### 🔍 Search Results for "${query || 'All Records'}"`];
       if (studentLines.length > 0) {
         sections.push(`#### Enrolled Students (${matchedStudents.length})\n${studentLines.join('\n')}`);
       }
@@ -2362,46 +2374,79 @@ export default function App() {
       const current = stateRef.current;
       const targetCol = (collectionName || 'admissions').toLowerCase().trim();
       const rawName = (payload.name || payload.data?.name || 'New Student').trim();
-      const rawPhone =
-        (payload.phone || payload.data?.phone || '9876543210').replace(/\D/g, '').slice(-10) ||
-        '9876543210';
+      const rawPhoneInput = String(payload.phone || payload.data?.phone || '').trim();
+      const extractedDigits = rawPhoneInput.replace(/\D/g, '').slice(-10);
+      const rawPhone = extractedDigits.length >= 10 ? extractedDigits : '';
       const rawCourseInput = (payload.course || payload.data?.course || '').trim();
-      const matchedCourse =
-        current.courses.find(
-          c =>
-            c.name.toLowerCase().includes(rawCourseInput.toLowerCase()) ||
-            rawCourseInput.toLowerCase().includes(c.name.toLowerCase())
-        ) || current.courses[0];
-      const courseName = matchedCourse
-        ? matchedCourse.name
-        : rawCourseInput || 'Complete Master Trader Blueprint';
+      const matchedCatalogCourse = current.courses.find(
+        c =>
+          rawCourseInput &&
+          (c.name.toLowerCase().includes(rawCourseInput.toLowerCase()) ||
+            rawCourseInput.toLowerCase().includes(c.name.toLowerCase()))
+      );
+      const rawTotalFeeInput = Number(
+        payload.totalFee ?? payload.data?.totalFee ?? payload.data?.totalFees ?? payload.data?.netFee ?? 0
+      );
+      const ssmiCourseAndFee = resolveSsmiCourseAndFee(
+        rawCourseInput || matchedCatalogCourse?.name,
+        rawTotalFeeInput > 0 ? rawTotalFeeInput : matchedCatalogCourse?.fee,
+        'Basic Trading',
+        5000
+      );
+      const courseName = ssmiCourseAndFee.courseName;
       const rawPaid = Number(
         payload.feePaid ??
           payload.amount ??
+          payload.data?.paidFees ??
           payload.data?.feePaid ??
           payload.data?.paidAmount ??
           payload.data?.amount ??
           0
       );
-      const rawTotalFee = Number(
-        payload.totalFee ?? payload.data?.totalFee ?? payload.data?.netFee ?? 0
-      );
       const rawBatch = String(payload.batch || payload.data?.batch || '').trim();
-      const rawNotes = (payload.notes || payload.data?.notes || 'Added via Candle AI Assistant').trim();
+      const rawNotes = (payload.notes || payload.data?.notes || 'Added via SSMI Executive AI Assistant').trim();
       const rawDate = (payload.date || payload.data?.date || LIVE_TODAY_ISO).trim();
 
       if (targetCol === 'inquiries' || targetCol === 'leads' || targetCol === 'inquiry') {
-        const cleanLeadName = rawName.replace(/\b[6-9]\d{9}\b/g, '').replace(/interested in.*$/i, '').trim() || 'New Inquiry';
-        const leadId = getDeterministicLeadId(rawPhone, undefined, cleanLeadName);
+        const cleanLeadName =
+          rawName
+            .replace(/\b[6-9]\d{9}\b/g, '')
+            .replace(/interested in.*$/i, '')
+            .trim() || 'New Inquiry';
+
+        // Prevent duplicate lead creation if same 10-digit phone or exact name already exists
+        const existingLeadByPhoneOrName = current.leads.find(l => {
+          const lp = (l.phone || '').replace(/\D/g, '').slice(-10);
+          return (
+            (extractedDigits.length === 10 && lp === extractedDigits) ||
+            l.name.trim().toLowerCase() === cleanLeadName.toLowerCase()
+          );
+        });
+        if (existingLeadByPhoneOrName) {
+          return await agentStoreActions.updateRecord('leads', existingLeadByPhoneOrName.id, {
+            ...(rawCourseInput ? { course: courseName } : {}),
+            ...(rawPhone ? { phone: rawPhone } : {}),
+            ...(payload.stage || payload.status ? { stage: payload.stage || payload.status } : {}),
+            ...(payload.notes ? { notes: rawNotes } : {})
+          });
+        }
+
+        const leadId = getDeterministicLeadId(
+          extractedDigits.length >= 10 ? extractedDigits : '',
+          undefined,
+          cleanLeadName
+        );
         const newLead: Lead = {
           id: leadId,
+          recordType: 'inquiry',
+          isConverted: false,
           name: cleanLeadName,
           phone: rawPhone,
           email: payload.email || payload.data?.email || '',
-          locality: payload.locality || payload.data?.locality || 'Pune',
-          course: courseName,
-          source: payload.source || payload.data?.source || 'AI Assistant',
-          stage: (payload.stage || payload.data?.stage || 'New Enquiry') as LeadStage,
+          locality: payload.locality || payload.branch || payload.data?.locality || 'Pune',
+          course: courseName || 'Basic Trading',
+          source: payload.source || payload.data?.source || 'AI Copilot',
+          stage: (payload.stage || payload.status || payload.data?.stage || 'New Enquiry') as LeadStage,
           intent: (payload.intent || payload.data?.intent || 'Hot') as Lead['intent'],
           enquiryDate: LIVE_TODAY_ISO,
           followUpDate: payload.followUpDate || payload.date || payload.data?.followUpDate || LIVE_TODAY_ISO,
@@ -2411,7 +2456,12 @@ export default function App() {
           staff: 'Prasad Sir',
           objection: 'None',
           notes: rawNotes,
-          ...({ createdBy: getCurrentActorEmail(), updatedBy: getCurrentActorEmail(), updatedAt: new Date().toISOString() } as any)
+          ...({
+            status: payload.status || 'New',
+            createdBy: getCurrentActorEmail(),
+            updatedBy: getCurrentActorEmail(),
+            updatedAt: new Date().toISOString()
+          } as any)
         };
         updateAndPersistState(prev => ({
           ...prev,
@@ -2424,13 +2474,24 @@ export default function App() {
           console.warn('Firestore lead write notice:', err);
         });
         scheduleEnrollmentOrLeadCloudSync();
-        logAudit('Lead', 'AI Created Inquiry', newLead.id, `${newLead.name} (${newLead.phone}) for ${newLead.course}`);
-        showToast(`🤖 Lead Added: ${newLead.name}`);
+        logAudit('Lead', 'AI Created Inquiry', newLead.id, `${newLead.name} (${newLead.phone || 'Not provided'}) for ${newLead.course}`);
+        showToast(`✅ Lead Added: ${newLead.name}`);
         return {
           success: true,
           recordId: newLead.id,
           record: newLead,
-          summary: `Added new lead **${newLead.name}** (ID: \`${newLead.id}\`, Phone: \`${newLead.phone}\`) for **${newLead.course}**.`
+          actionCard: {
+            recordType: 'inquiry',
+            recordId: newLead.id,
+            internalId: newLead.id,
+            name: newLead.name,
+            phone: newLead.phone,
+            course: newLead.course,
+            branch: newLead.locality || 'Pune',
+            stageOrBatch: newLead.stage,
+            isConverted: false
+          },
+          summary: `Created inquiry/lead **${newLead.name}** (ID: \`${newLead.id}\`, Phone: \`${newLead.phone || 'Not provided'}\`, Course: **${newLead.course}**, Status: **${(newLead as any).status || newLead.stage}**, Date: \`${newLead.enquiryDate}\`).`
         };
       }
 
@@ -2445,17 +2506,21 @@ export default function App() {
         }
       }
 
-      // Check if student with exact same name already exists in students -> update instead of duplicating
-      const existingStuMatch = current.students.find(
-        s => s.name.trim().toLowerCase() === rawName.toLowerCase()
-      );
+      // Check if student with exact same name or 10-digit phone already exists in students -> update instead of duplicating
+      const existingStuMatch = current.students.find(s => {
+        const sp = (s.phone || '').replace(/\D/g, '').slice(-10);
+        return (
+          s.name.trim().toLowerCase() === rawName.toLowerCase() ||
+          (extractedDigits.length === 10 && sp === extractedDigits)
+        );
+      });
       if (existingStuMatch) {
         return await agentStoreActions.updateRecord('students', existingStuMatch.id, {
           ...(rawBatch ? { batch: rawBatch } : {}),
           ...(rawCourseInput ? { course: courseName } : {}),
           ...(rawPaid > 0 ? { feePaid: rawPaid, paidAmount: rawPaid } : {}),
-          ...(rawTotalFee > 0 ? { netFee: rawTotalFee, totalFee: rawTotalFee } : {}),
-          ...(payload.phone ? { phone: rawPhone } : {}),
+          ...(rawTotalFeeInput > 0 ? { netFee: rawTotalFeeInput, totalFee: rawTotalFeeInput } : {}),
+          ...(rawPhone ? { phone: rawPhone } : {}),
           ...(payload.notes ? { notes: rawNotes } : {})
         });
       }
@@ -2468,25 +2533,25 @@ export default function App() {
         current.batches.find(b => b.course === courseName && b.status === 'Active') ||
         current.batches[0];
       const assignedBatch = rawBatch || (matchBatch ? matchBatch.code : 'OCT-MTB-01');
-      const defaultCourseFee = matchedCourse ? matchedCourse.fee : 35000;
-      const netFee =
-        rawTotalFee > 0
-          ? rawTotalFee
-          : rawPaid > defaultCourseFee
-          ? rawPaid
-          : defaultCourseFee;
-      const paidNow = rawPaid > 0 ? rawPaid : Math.round(netFee / 2);
+      const netFee = Math.max(ssmiCourseAndFee.totalFees, rawPaid);
+      const paidNow = Math.max(0, rawPaid);
+      const pendingFees = Math.max(0, netFee - paidNow);
       const milestones = buildMilestonesForPaidAmount(paidNow, netFee, rawDate);
-      const studentId = getDeterministicStudentId(rawPhone, undefined, regId);
+      const studentId = getDeterministicStudentId(
+        extractedDigits.length >= 10 ? extractedDigits : '',
+        undefined,
+        regId
+      );
 
       const newStudent: Student = {
         id: studentId,
         regId,
+        recordType: 'student',
         name: rawName,
         phone: rawPhone,
-        whatsapp: `+91${rawPhone}`,
+        whatsapp: extractedDigits.length >= 10 ? `+91${extractedDigits}` : rawPhone,
         email: '',
-        address: 'Pune',
+        address: payload.branch || payload.locality || 'Pune',
         course: courseName,
         batch: assignedBatch,
         enrollDate: rawDate,
@@ -2499,7 +2564,15 @@ export default function App() {
         docs: 'Verified via AI Agent',
         notes: rawNotes,
         milestones,
-        ...({ createdBy: getCurrentActorEmail(), updatedBy: getCurrentActorEmail(), updatedAt: new Date().toISOString() } as any)
+        ...({
+          totalFees: netFee,
+          paidFees: paidNow,
+          pendingFees,
+          paymentMode: payload.paymentMode || 'UPI',
+          createdBy: getCurrentActorEmail(),
+          updatedBy: getCurrentActorEmail(),
+          updatedAt: new Date().toISOString()
+        } as any)
       };
 
       updateAndPersistState(prev => ({
@@ -2513,24 +2586,35 @@ export default function App() {
       saveStudentToFirestore(newStudent).catch(() => {});
       syncToGoogleSheets(newStudent, 'CREATE').catch(() => {});
       logAudit('Student', 'AI Created Student Admission', newStudent.regId, `${newStudent.name} (${newStudent.course})`);
-      showToast(`🤖 Student Admission Enrolled: ${newStudent.name} (${newStudent.regId})`);
+      showToast(`🎓 Student Enrolled: ${newStudent.name} (${newStudent.regId})`);
 
       return {
         success: true,
         recordId: newStudent.regId,
         record: newStudent,
-        summary: `Enrolled new student **${newStudent.name}** (Reg ID: \`${newStudent.regId}\`, Phone: \`${newStudent.phone}\`) in **${newStudent.course}** (Batch: \`${newStudent.batch}\`, Paid: **₹${paidNow.toLocaleString('en-IN')}** / Net Fee: **₹${netFee.toLocaleString('en-IN')}**).`
+        actionCard: {
+          recordType: 'student',
+          recordId: newStudent.regId,
+          internalId: newStudent.id,
+          name: newStudent.name,
+          phone: newStudent.phone,
+          course: newStudent.course,
+          branch: newStudent.address || 'Pune',
+          stageOrBatch: newStudent.batch
+        },
+        summary: `Enrolled student **${newStudent.name}** (Reg ID: \`${newStudent.regId}\`, Phone: \`${newStudent.phone || 'Not provided'}\`) in **${newStudent.course}** — Batch: \`${newStudent.batch}\`, Total Fees: **₹${netFee.toLocaleString('en-IN')}**, Paid Fees: **₹${paidNow.toLocaleString('en-IN')}**, Pending Fees: **₹${pendingFees.toLocaleString('en-IN')}**.`
       };
     },
 
     updateRecord: async (collectionName, identifier, rawUpdates) => {
       const current = stateRef.current;
       const updates = rawUpdates || {};
-      const targetCol = (collectionName || 'students').toLowerCase().trim();
+      const targetCol = (collectionName || 'auto').toLowerCase().trim();
       const rawIdentifier = String(identifier || updates.name || '').trim();
 
       // Determine if updates include student-specific fields (batch, feePaid, paidAmount, netFee, totalFee, attendanceStatus)
       const rawPaidInput =
+        updates.paidFees ??
         updates.feePaid ??
         updates.paidAmount ??
         updates.feesPaid ??
@@ -2538,7 +2622,7 @@ export default function App() {
         updates.amount;
       const hasPaidUpdate =
         rawPaidInput !== undefined && rawPaidInput !== null && !Number.isNaN(Number(rawPaidInput));
-      const rawTotalFeeInput = updates.totalFee ?? updates.netFee ?? updates.grossFee;
+      const rawTotalFeeInput = updates.totalFees ?? updates.totalFee ?? updates.netFee ?? updates.grossFee;
       const hasTotalFeeUpdate =
         rawTotalFeeInput !== undefined &&
         rawTotalFeeInput !== null &&
@@ -2553,9 +2637,37 @@ export default function App() {
         targetCol === 'admissions' ||
         targetCol === 'fees';
 
-      // Universal Fuzzy Entity Resolution across stateRef.current and window.instituteDB
-      const preferred =
-        targetCol === 'inquiries' || targetCol === 'leads' ? 'leads' : 'students';
+      // Multi-match disambiguation check: if multiple records share a first/partial name in the target collection, list them!
+      const preferred: 'students' | 'leads' | 'auto' =
+        targetCol === 'inquiries' || targetCol === 'leads'
+          ? 'leads'
+          : targetCol === 'students' || targetCol === 'admissions'
+          ? 'students'
+          : 'auto';
+
+      const allMatches = findAllMatchingEntities(current, rawIdentifier, preferred);
+      const sameColMatches =
+        preferred === 'auto'
+          ? allMatches.filter(m => m.collection === 'students').length > 1
+            ? allMatches.filter(m => m.collection === 'students')
+            : allMatches.filter(m => m.collection === 'leads').length > 1
+            ? allMatches.filter(m => m.collection === 'leads')
+            : allMatches
+          : allMatches;
+
+      if (sameColMatches.length > 1) {
+        const listLines = sameColMatches
+          .slice(0, 8)
+          .map(
+            m =>
+              `- **${m.record.name}** (\`${m.record.regId || m.record.id}\` • ${m.collection === 'students' ? 'Student' : 'Lead'} • Course: **${m.record.course || 'N/A'}** • Phone: \`${m.record.phone || 'N/A'}\`)`
+          )
+          .join('\n');
+        return {
+          success: false,
+          summary: `Multiple records match **"${rawIdentifier}"**. Please specify the full name, phone number, or ID of the record you want to update:\n\n${listLines}`
+        };
+      }
       const resolution =
         resolveEntityRecord(current, rawIdentifier, preferred) ||
         (typeof window !== 'undefined' && (window as any).instituteDB
@@ -2604,7 +2716,7 @@ export default function App() {
           c => c.name.toLowerCase() === courseName.toLowerCase()
         );
         const defaultFee = matchedCourse ? matchedCourse.fee : 35000;
-        const paidVal = hasPaidUpdate ? Math.max(0, Number(rawPaidInput)) : Math.round(defaultFee / 2);
+        const paidVal = hasPaidUpdate ? Math.max(0, Number(rawPaidInput)) : 0;
         const netFeeVal = hasTotalFeeUpdate
           ? Math.max(paidVal, Number(rawTotalFeeInput))
           : Math.max(defaultFee, paidVal);
@@ -2614,7 +2726,8 @@ export default function App() {
             'Pro Trader Morning'
         ).trim();
 
-        const stuPhone = String(updates.phone || sourceLead.phone || '9876543210').trim();
+        const rawStuPhoneDigits = String(updates.phone || sourceLead.phone || '').replace(/\D/g, '').slice(-10);
+        const stuPhone = rawStuPhoneDigits.length >= 10 ? rawStuPhoneDigits : '';
         const stuId = getDeterministicStudentId(stuPhone, undefined, regId);
         const nowIso = new Date().toISOString();
 
@@ -2623,7 +2736,7 @@ export default function App() {
           regId,
           name: String(updates.name || sourceLead.name).trim(),
           phone: stuPhone,
-          whatsapp: `+91${stuPhone.replace(/\D/g, '').slice(-10)}`,
+          whatsapp: stuPhone ? `+91${stuPhone}` : '',
           email: sourceLead.email || '',
           address: sourceLead.locality || 'Pune',
           course: courseName,
@@ -2792,15 +2905,15 @@ export default function App() {
           c => c.name.toLowerCase() === courseName.toLowerCase()
         );
         const defaultFee = matchedCourse ? matchedCourse.fee : 35000;
-        const paidVal = hasPaidUpdate ? Math.max(0, Number(rawPaidInput)) : 15000;
+        const paidVal = hasPaidUpdate ? Math.max(0, Number(rawPaidInput)) : 0;
         const netFeeVal = hasTotalFeeUpdate
           ? Math.max(paidVal, Number(rawTotalFeeInput))
           : Math.max(defaultFee, paidVal);
         const batchVal = String(
           updates.batch || current.batches[0]?.code || 'Pro Trader Morning'
         ).trim();
-        const phoneVal =
-          String(updates.phone || '9823011223').replace(/\D/g, '').slice(-10) || '9823011223';
+        const extractedPhone = String(updates.phone || '').replace(/\D/g, '').slice(-10);
+        const phoneVal = extractedPhone.length >= 10 ? extractedPhone : '';
 
         const stuId = getDeterministicStudentId(phoneVal, undefined, regId);
 
@@ -2809,7 +2922,7 @@ export default function App() {
           regId,
           name: String(updates.name || rawIdentifier).trim(),
           phone: phoneVal,
-          whatsapp: `+91${phoneVal}`,
+          whatsapp: phoneVal ? `+91${phoneVal}` : '',
           email: '',
           address: 'Pune',
           course: courseName,
@@ -2860,24 +2973,44 @@ export default function App() {
       };
     },
 
-    deleteRecord: async (collectionName, identifier) => {
+    deleteRecord: async (collectionName, identifier, confirmed = false) => {
       if (!isPrimaryAdminEmail(authEmailRef.current)) {
         return {
           success: false,
           summary:
-            '🔒 Permission Denied: Record deletion is restricted to the Master Admin account.'
+            '🔒 Permission Denied: Record deletion is restricted to the Master Admin account (Prasad Sir).'
         };
       }
       const current = stateRef.current;
-      const targetCol = (collectionName || 'students').toLowerCase().trim();
-      const preferred =
-        targetCol === 'inquiries' || targetCol === 'leads' ? 'leads' : 'students';
+      const targetCol = (collectionName || 'auto').toLowerCase().trim();
+      const preferred: 'students' | 'leads' | 'auto' =
+        targetCol === 'inquiries' || targetCol === 'leads'
+          ? 'leads'
+          : targetCol === 'students' || targetCol === 'admissions'
+          ? 'students'
+          : 'auto';
       const resolution = resolveEntityRecord(current, identifier, preferred);
 
       if (!resolution) {
         return {
           success: false,
           summary: `Could not find student or inquiry record matching "${identifier}" to delete.`
+        };
+      }
+
+      const recName = String(resolution.record.name || identifier);
+      const recId = String(resolution.record.regId || resolution.record.id || '');
+      const recCourse = String(resolution.record.course || 'Assigned Course');
+      const recPhone = String(resolution.record.phone || 'N/A');
+      const isTestRecord = /\b(test|dummy|demo|sample)\b/i.test(recName) || /\b(test|dummy|demo)\b/i.test(identifier);
+
+      // Safety confirmation check: unless user explicitly wrote confirm/force or it's a test record, ask 1-line confirmation first
+      if (!confirmed && !isTestRecord) {
+        return {
+          success: false,
+          awaitingConfirmation: true,
+          recordId: recId,
+          summary: `Matched ${resolution.collection === 'leads' ? 'Lead' : 'Student'} **${recName}** (\`${recId}\` • Course: **${recCourse}** • Phone: \`${recPhone}\`). Reply **"confirm delete ${recName}"** to permanently delete this record.`
         };
       }
 
@@ -2890,11 +3023,11 @@ export default function App() {
         }));
         deleteLeadFromFirestore(targetLead.id).catch(() => {});
         logAudit('Lead', 'AI Deleted Inquiry', targetLead.id, `Removed ${targetLead.name}`);
-        showToast(`🤖 AI Deleted Inquiry: ${targetLead.name}`);
+        showToast(`🗑️ Deleted Lead: ${targetLead.name}`);
         return {
           success: true,
           recordId: targetLead.id,
-          summary: `Deleted inquiry record for **${targetLead.name}** (\`${targetLead.id}\`).`
+          summary: `Permanently deleted inquiry/lead **${targetLead.name}** (\`${targetLead.id}\`) from state and Firebase Firestore.`
         };
       }
 
@@ -2908,12 +3041,12 @@ export default function App() {
         deleteStudentFromFirestore(targetStudent.id).catch(() => {});
         syncToGoogleSheets({ id: targetStudent.id, status: 'Deleted' }, 'DELETE').catch(() => {});
         logAudit('Student', 'AI Deleted Student Record', targetStudent.regId, `Deleted ${targetStudent.name}`);
-        showToast(`🤖 AI Deleted Student: ${targetStudent.name} (${targetStudent.regId})`);
+        showToast(`🗑️ Deleted Student: ${targetStudent.name} (${targetStudent.regId})`);
 
         return {
           success: true,
           recordId: targetStudent.regId,
-          summary: `Permanently removed student record **${targetStudent.name}** (\`${targetStudent.regId}\`) from the ledger.`
+          summary: `Permanently removed student record **${targetStudent.name}** (\`${targetStudent.regId}\`) from state and Firebase Firestore.`
         };
       }
 
@@ -3349,22 +3482,96 @@ export default function App() {
       });
     },
 
-    convertLeadToAdmission: async ({ leadIdentifier, course, batch, feePaid }) => {
+    getDashboardStats: async () => {
+      const current = stateRef.current;
+      const activeStudentsList = current.students.filter(s => s.status !== 'Archived');
+      const totalLeadsCount = current.leads.length;
+      const openLeadsCount = current.leads.filter(
+        l => l.isConverted !== true && l.stage !== 'Admission Confirmed'
+      ).length;
+
+      let totalFeesCollected = 0;
+      let totalPendingFees = 0;
+      const courseBreakdownMap = new Map<
+        string,
+        { students: number; leads: number; collected: number; pending: number }
+      >();
+
+      activeStudentsList.forEach(s => {
+        const paid = (s.milestones || [])
+          .filter(m => m.status === 'Paid')
+          .reduce((sum, m) => sum + m.amount, 0);
+        const pending = Math.max(0, s.netFee - paid);
+        totalFeesCollected += paid;
+        totalPendingFees += pending;
+
+        const cName = s.course || 'General Trading';
+        const entry = courseBreakdownMap.get(cName) || {
+          students: 0,
+          leads: 0,
+          collected: 0,
+          pending: 0
+        };
+        entry.students += 1;
+        entry.collected += paid;
+        entry.pending += pending;
+        courseBreakdownMap.set(cName, entry);
+      });
+
+      current.leads.forEach(l => {
+        const cName = l.course || 'Basic Trading';
+        const entry = courseBreakdownMap.get(cName) || {
+          students: 0,
+          leads: 0,
+          collected: 0,
+          pending: 0
+        };
+        entry.leads += 1;
+        courseBreakdownMap.set(cName, entry);
+      });
+
+      const courseRows = Array.from(courseBreakdownMap.entries())
+        .map(
+          ([course, data]) =>
+            `- **${course}**: **${data.students}** Students • **${data.leads}** Leads • Collected: **₹${data.collected.toLocaleString('en-IN')}** • Pending: **₹${data.pending.toLocaleString('en-IN')}**`
+        )
+        .join('\n');
+
+      const stats = {
+        totalLeads: totalLeadsCount,
+        openLeads: openLeadsCount,
+        activeStudents: activeStudentsList.length,
+        totalFeesCollected,
+        pendingFees: totalPendingFees,
+        courseBreakdown: Object.fromEntries(courseBreakdownMap.entries())
+      };
+
+      return {
+        success: true,
+        stats,
+        summary: `### 📊 SSMI Live Dashboard & Financial Summary\n- **Total Leads / Inquiries:** **${totalLeadsCount}** (${openLeadsCount} open)\n- **Active Enrolled Students:** **${activeStudentsList.length}**\n- **Total Fees Collected:** **₹${totalFeesCollected.toLocaleString('en-IN')}**\n- **Total Pending Fees:** **₹${totalPendingFees.toLocaleString('en-IN')}**\n\n#### Course-Wise Breakdown\n${courseRows || '- No course records yet.'}`
+      };
+    },
+
+    convertLeadToAdmission: async ({ leadIdentifier, course, batch, feePaid, totalFees }) => {
       const current = stateRef.current;
       const q = String(leadIdentifier || '').trim();
       const resolution = resolveEntityRecord(current, q, 'leads');
-      const lead = resolution && resolution.collection === 'leads'
-        ? (resolution.record as Lead)
-        : current.leads.find(l =>
-            l.name.toLowerCase().includes(q.toLowerCase()) ||
-            l.phone.includes(q.replace(/\D/g, '')) ||
-            l.id.toLowerCase() === q.toLowerCase()
-          );
+      const lead =
+        resolution && resolution.collection === 'leads'
+          ? (resolution.record as Lead)
+          : current.leads.find(
+              l =>
+                l.name.toLowerCase().includes(q.toLowerCase()) ||
+                l.phone.includes(q.replace(/\D/g, '')) ||
+                l.id.toLowerCase() === q.toLowerCase()
+            );
 
       if (!lead) {
-        const existingStudent = current.students.find(s =>
-          s.name.toLowerCase().includes(q.toLowerCase()) ||
-          s.phone.includes(q.replace(/\D/g, ''))
+        const existingStudent = current.students.find(
+          s =>
+            s.name.toLowerCase().includes(q.toLowerCase()) ||
+            (q.replace(/\D/g, '').length >= 4 && s.phone.includes(q.replace(/\D/g, '')))
         );
         if (existingStudent) {
           showToast(`⚠️ Student already enrolled: ${existingStudent.name} (${existingStudent.regId})`);
@@ -3382,30 +3589,49 @@ export default function App() {
       }
 
       const normLeadPhone = (lead.phone || '').replace(/\D/g, '').slice(-10);
-      const cleanPhone = normLeadPhone || (lead.phone || '').trim() || '9876543210';
-      const courseName = String(course || lead.course || current.courses[0]?.name || 'Complete Master Trader Blueprint').trim();
-      const matchedCourse = current.courses.find(c => c.name.toLowerCase().includes(courseName.toLowerCase()) || courseName.toLowerCase().includes(c.name.toLowerCase())) || current.courses[0];
-      const defaultCourseFee = matchedCourse ? matchedCourse.fee : 35000;
-      const paidVal = feePaid !== undefined && feePaid !== null && !Number.isNaN(Number(feePaid)) && Number(feePaid) > 0
-        ? Number(feePaid)
-        : Math.round(defaultCourseFee / 2);
-      const netFeeVal = Math.max(defaultCourseFee, paidVal);
-      const matchBatch = current.batches.find(b => b.course === courseName && b.status === 'Active') || current.batches[0];
+      const cleanPhone = normLeadPhone.length >= 10 ? normLeadPhone : '';
+      const rawCourseInput = String(course || lead.course || 'Basic Trading').trim();
+      const matchedCatalogCourse = current.courses.find(
+        c =>
+          c.name.toLowerCase().includes(rawCourseInput.toLowerCase()) ||
+          rawCourseInput.toLowerCase().includes(c.name.toLowerCase())
+      );
+      const mapped = resolveSsmiCourseAndFee(
+        rawCourseInput,
+        totalFees !== undefined ? Number(totalFees) : matchedCatalogCourse?.fee,
+        'Basic Trading',
+        5000
+      );
+      const courseName = mapped.courseName;
+      const paidVal =
+        feePaid !== undefined && feePaid !== null && !Number.isNaN(Number(feePaid)) && Number(feePaid) >= 0
+          ? Number(feePaid)
+          : 0;
+      const netFeeVal = Math.max(mapped.totalFees, paidVal);
+      const pendingFeesVal = Math.max(0, netFeeVal - paidVal);
+      const matchBatch =
+        current.batches.find(b => b.course === courseName && b.status === 'Active') ||
+        current.batches[0];
       const batchVal = String(batch || (matchBatch ? matchBatch.code : 'OCT-MTB-01')).trim();
 
       const yr = new Date().getFullYear();
       const nextNum = current.students.length + 1;
       const regId = `SSMI-${yr}-${String(nextNum).padStart(3, '0')}`;
 
-      const stuId = getDeterministicStudentId(cleanPhone, undefined, regId);
+      const stuId = getDeterministicStudentId(
+        normLeadPhone.length >= 10 ? normLeadPhone : '',
+        undefined,
+        regId
+      );
 
       const newStudent: Student = {
         id: stuId,
         regId,
+        recordType: 'student',
         leadId: lead.id,
         name: (lead.name || 'Enrolled Student').trim(),
         phone: cleanPhone,
-        whatsapp: `+91${cleanPhone.replace(/\D/g, '').slice(-10)}`,
+        whatsapp: normLeadPhone.length >= 10 ? `+91${normLeadPhone}` : cleanPhone,
         email: (lead.email || '').trim(),
         address: (lead.locality || 'Pune').trim(),
         course: courseName,
@@ -3413,25 +3639,36 @@ export default function App() {
         enrollDate: LIVE_TODAY_ISO,
         joinDate: LIVE_TODAY_ISO,
         status: 'Active',
-        source: `Lead Conversion (${lead.source || 'AI Assistant'})`,
+        source: `Lead Conversion (${lead.source || 'AI Copilot'})`,
         grossFee: netFeeVal,
         discount: 0,
         netFee: netFeeVal,
         docs: `Converted from Lead ${lead.id}`,
         notes: (lead.notes || 'Converted via AI Assistant').trim(),
-        milestones: buildMilestonesForPaidAmount(paidVal, netFeeVal, LIVE_TODAY_ISO)
+        milestones: buildMilestonesForPaidAmount(paidVal, netFeeVal, LIVE_TODAY_ISO),
+        ...({
+          totalFees: netFeeVal,
+          paidFees: paidVal,
+          pendingFees: pendingFeesVal,
+          createdBy: getCurrentActorEmail(),
+          updatedBy: getCurrentActorEmail(),
+          updatedAt: new Date().toISOString()
+        } as any)
       };
 
       const updatedLead: Lead = {
         ...lead,
+        isConverted: true,
+        convertedStudentId: newStudent.id,
         stage: 'Admission Confirmed',
-        lastContact: LIVE_TODAY_ISO
+        lastContact: LIVE_TODAY_ISO,
+        ...({ status: 'Converted', updatedBy: getCurrentActorEmail(), updatedAt: new Date().toISOString() } as any)
       };
 
       updateAndPersistState(prev => ({
         ...prev,
         batches: ensureBatchExists(prev.batches, batchVal, courseName),
-        leads: prev.leads.map(l => l.id === lead.id ? updatedLead : l),
+        leads: prev.leads.map(l => (l.id === lead.id ? updatedLead : l)),
         students: deduplicateRecords([newStudent, ...(prev.students || [])], 'id', s => {
           const p = (s.phone || '').replace(/\D/g, '').slice(-10);
           return p.length >= 10 ? `PHONE_${p}` : undefined;
@@ -3443,15 +3680,31 @@ export default function App() {
       syncToGoogleSheets(newStudent, 'CREATE').catch(() => {});
       scheduleEnrollmentOrLeadCloudSync();
 
-      logAudit('Lead', 'AI Converted Lead to Admission', `${lead.id} → ${regId}`, `Enrolled ${lead.name} in ${newStudent.course}`);
-      showToast(`🎉 Converted Lead to Admission: ${newStudent.name}`);
+      logAudit(
+        'Lead',
+        'AI Converted Lead to Admission',
+        `${lead.id} → ${regId}`,
+        `Enrolled ${lead.name} in ${newStudent.course}`
+      );
+      showToast(`🔄 Lead Converted to Student: ${newStudent.name} (${newStudent.regId})`);
 
       return {
         success: true,
         recordId: newStudent.regId,
         record: newStudent,
-        actionLabel: 'LEAD_CONVERTED_TO_ADMISSION',
-        summary: `Converted lead **${lead.name}** into enrolled student **${newStudent.name}** (\`${newStudent.regId}\`) in **${newStudent.course}** (Batch: \`${newStudent.batch}\`, Paid: **₹${paidVal.toLocaleString('en-IN')}** / Net Fee: **₹${netFeeVal.toLocaleString('en-IN')}**). Lead stage updated to **Admission Confirmed**.`
+        actionLabel: '🔄 Lead Converted to Student',
+        actionCard: {
+          recordType: 'student',
+          recordId: newStudent.regId,
+          internalId: newStudent.id,
+          name: newStudent.name,
+          phone: newStudent.phone,
+          course: newStudent.course,
+          branch: newStudent.address || 'Pune',
+          stageOrBatch: newStudent.batch,
+          isConverted: true
+        },
+        summary: `Converted lead **${lead.name}** into enrolled student **${newStudent.name}** (\`${newStudent.regId}\`) in **${newStudent.course}** — Batch: \`${newStudent.batch}\`, Total Fees: **₹${netFeeVal.toLocaleString('en-IN')}**, Paid Fees: **₹${paidVal.toLocaleString('en-IN')}**, Pending Fees: **₹${pendingFeesVal.toLocaleString('en-IN')}**. Lead status marked as **Converted**.`
       };
     },
 
@@ -3475,6 +3728,417 @@ export default function App() {
       return {
         success: true,
         summary: `Executed live web & market search for "${query}".`
+      };
+    },
+
+    getRecordDetails: async (identifier, entityType = 'auto') => {
+      const current = stateRef.current;
+      const q = String(identifier || '').trim();
+      const pref: 'students' | 'leads' | 'auto' =
+        entityType === 'inquiries' ? 'leads' : entityType === 'students' ? 'students' : 'auto';
+      const allMatches = findAllMatchingEntities(current, q, pref);
+      if (allMatches.length > 1) {
+        const listLines = allMatches
+          .slice(0, 8)
+          .map(
+            m =>
+              `- **${m.record.name}** (\`${m.record.regId || m.record.id}\` • ${m.collection === 'students' ? 'Student' : 'Lead'} • Course: **${m.record.course || 'N/A'}** • Phone: \`${m.record.phone || 'Not provided'}\`)`
+          )
+          .join('\n');
+        return {
+          success: true,
+          summary: `Multiple records match **"${q}"**. Please specify which record you want details for:\n\n${listLines}`
+        };
+      }
+      const res = resolveEntityRecord(current, q, pref);
+      if (!res) {
+        return {
+          success: false,
+          summary: `No ${pref === 'students' ? 'student' : 'lead/inquiry'} record found matching **"${q}"**.`
+        };
+      }
+      if (res.collection === 'students') {
+        const s = res.record as Student;
+        const paid = (s.milestones || [])
+          .filter(m => m.status === 'Paid')
+          .reduce((sum, m) => sum + m.amount, 0);
+        const due = Math.max(0, s.netFee - paid);
+        const attPct = getStudentAttendancePct(s.id, current);
+        return {
+          success: true,
+          recordId: s.regId,
+          record: s,
+          actionCard: {
+            recordType: 'student',
+            recordId: s.regId,
+            internalId: s.id,
+            name: s.name,
+            phone: s.phone,
+            course: s.course,
+            branch: s.address || 'Pune',
+            stageOrBatch: s.batch
+          },
+          summary: `### 🎓 Student Profile: ${s.name} (\`${s.regId}\`)\n- **Course**: ${s.course}\n- **Batch**: \`${s.batch || 'Unassigned'}\`\n- **Phone**: \`${s.phone || 'Not provided'}\`\n- **Branch / Address**: ${s.address || 'Pune'}\n- **Fee Summary**: Paid **₹${paid.toLocaleString('en-IN')}** / Total **₹${s.netFee.toLocaleString('en-IN')}** (Pending Due: **₹${due.toLocaleString('en-IN')}**)\n- **Attendance**: **${attPct}%**\n- **Status**: **${s.status}** (Enrolled: \`${s.enrollDate}\`)\n- **Notes**: ${s.notes || 'None'}`
+        };
+      } else {
+        const l = res.record as Lead;
+        return {
+          success: true,
+          recordId: l.id,
+          record: l,
+          actionCard: {
+            recordType: 'inquiry',
+            recordId: l.id,
+            internalId: l.id,
+            name: l.name,
+            phone: l.phone,
+            course: l.course,
+            branch: l.locality || 'Pune',
+            stageOrBatch: l.stage,
+            isConverted: Boolean((l as any).isConverted || l.stage === 'Admission Confirmed')
+          },
+          summary: `### 📋 Inquiry / Lead Details: ${l.name} (\`${l.id}\`)\n- **Interested Course**: ${l.course}\n- **Stage**: **${l.stage}**\n- **Phone**: \`${l.phone || 'Not provided'}\`\n- **Locality / Branch**: ${l.locality || 'Pune'}\n- **Source**: ${l.source || 'Direct'}\n- **Enquiry Date**: \`${l.enquiryDate}\` • **Follow-up Date**: \`${l.followUpDate || 'N/A'}\`\n- **Counselor**: ${l.staff || 'Prasad Sir'}\n- **Notes**: ${l.notes || 'None'}`
+        };
+      }
+    },
+
+    findDuplicateRecords: async (args) => {
+      const category = args?.category || 'all';
+      const deleteDuplicates = Boolean(args?.deleteDuplicates);
+      const confirmed = Boolean(args?.confirmed);
+      const current = stateRef.current;
+      const dupStudents: Student[] = [];
+      const dupLeads: Lead[] = [];
+
+      if (category === 'all' || category === 'students') {
+        const seenStuPhones = new Set<string>();
+        const seenStuNames = new Set<string>();
+        for (const s of current.students) {
+          const p = (s.phone || '').replace(/\D/g, '').slice(-10);
+          const n = (s.name || '').trim().toLowerCase();
+          const isPhoneDup = p.length === 10 && seenStuPhones.has(p);
+          const isNameDup = n.length > 2 && seenStuNames.has(n);
+          if (isPhoneDup || isNameDup) {
+            dupStudents.push(s);
+          } else {
+            if (p.length === 10) seenStuPhones.add(p);
+            if (n.length > 2) seenStuNames.add(n);
+          }
+        }
+      }
+
+      if (category === 'all' || category === 'leads') {
+        const seenLeadPhones = new Set<string>();
+        const seenLeadNames = new Set<string>();
+        for (const l of current.leads) {
+          const p = (l.phone || '').replace(/\D/g, '').slice(-10);
+          const n = (l.name || '').trim().toLowerCase();
+          const isPhoneDup = p.length === 10 && seenLeadPhones.has(p);
+          const isNameDup = n.length > 2 && seenLeadNames.has(n);
+          if (isPhoneDup || isNameDup) {
+            dupLeads.push(l);
+          } else {
+            if (p.length === 10) seenLeadPhones.add(p);
+            if (n.length > 2) seenLeadNames.add(n);
+          }
+        }
+      }
+
+      if (dupStudents.length === 0 && dupLeads.length === 0) {
+        return {
+          success: true,
+          duplicates: [],
+          summary: `### 🧹 Duplicate Audit Complete\nNo duplicate student or inquiry records were found in the CRM database. All ${current.students.length} students and ${current.leads.length} leads have unique identities.`
+        };
+      }
+
+      const previewLines: string[] = [];
+      dupStudents.forEach(s => {
+        previewLines.push(`- **Student**: **${s.name}** (\`${s.regId}\` • Phone: \`${s.phone || 'N/A'}\` • Course: ${s.course})`);
+      });
+      dupLeads.forEach(l => {
+        previewLines.push(`- **Lead**: **${l.name}** (\`${l.id}\` • Phone: \`${l.phone || 'N/A'}\` • Course: ${l.course})`);
+      });
+
+      if (deleteDuplicates && !confirmed) {
+        return {
+          success: false,
+          duplicates: [...dupStudents, ...dupLeads],
+          awaitingConfirmation: true,
+          summary: `### ⚠️ Duplicate Records Found (${dupStudents.length + dupLeads.length})\n${previewLines.join('\n')}\n\nReply **"confirm delete duplicate inquiries"** to permanently remove these duplicate entries while keeping the primary records intact.`
+        };
+      }
+
+      if (deleteDuplicates && confirmed) {
+        if (!isPrimaryAdminEmail(authEmailRef.current)) {
+          return {
+            success: false,
+            summary: '🔒 Permission Denied: Deleting duplicate records is restricted to the Master Admin account (srujaansharemarketpune@gmail.com).'
+          };
+        }
+        const dupStuIds = new Set(dupStudents.map(s => s.id));
+        const dupLeadIds = new Set(dupLeads.map(l => l.id));
+
+        dupStudents.forEach(s => {
+          markDeletedId('students', s.id);
+          deleteStudentFromFirestore(s.id).catch(() => {});
+        });
+        dupLeads.forEach(l => {
+          markDeletedId('leads', l.id);
+          deleteLeadFromFirestore(l.id).catch(() => {});
+        });
+
+        updateAndPersistState(prev => ({
+          ...prev,
+          students: prev.students.filter(s => !dupStuIds.has(s.id)),
+          leads: prev.leads.filter(l => !dupLeadIds.has(l.id))
+        }));
+
+        logAudit(
+          'System',
+          'AI Removed Duplicate Records',
+          `${dupStudents.length} Students, ${dupLeads.length} Leads`,
+          `Cleaned ${dupStudents.length + dupLeads.length} duplicates`
+        );
+        showToast(`🧹 Removed ${dupStudents.length + dupLeads.length} duplicate records`);
+
+        return {
+          success: true,
+          duplicates: [...dupStudents, ...dupLeads],
+          summary: `### ✅ Duplicate Cleanup Complete\nRemoved **${dupStudents.length}** duplicate student(s) and **${dupLeads.length}** duplicate inquiry record(s):\n${previewLines.join('\n')}`
+        };
+      }
+
+      return {
+        success: true,
+        duplicates: [...dupStudents, ...dupLeads],
+        summary: `### 🔍 Duplicate Records Audit (${dupStudents.length + dupLeads.length} found)\n${previewLines.join('\n')}\n\nTo remove these duplicates, ask: **"Confirm delete duplicate inquiries"**.`
+      };
+    },
+
+    getPendingFees: async (args) => {
+      const current = stateRef.current;
+      const cf = String(args?.course || '').trim().toLowerCase();
+      const bf = String(args?.batch || '').trim().toLowerCase();
+      const pendingList = current.students
+        .filter(
+          s =>
+            s.status === 'Active' &&
+            (!cf || s.course.toLowerCase().includes(cf)) &&
+            (!bf || (s.batch || '').toLowerCase().includes(bf))
+        )
+        .map(s => {
+          const paid = (s.milestones || [])
+            .filter(m => m.status === 'Paid')
+            .reduce((sum, m) => sum + m.amount, 0);
+          const due = Math.max(0, s.netFee - paid);
+          return { student: s, paid, due };
+        })
+        .filter(item => item.due > 0)
+        .sort((a, b) => b.due - a.due);
+
+      const totalPending = pendingList.reduce((sum, item) => sum + item.due, 0);
+      if (pendingList.length === 0) {
+        return {
+          success: true,
+          records: [],
+          summary: `### 💳 Pending Fee Report\nAll active students${cf ? ` in "${args?.course}"` : ''} have cleared their fee balances (₹0 pending).`
+        };
+      }
+
+      const lines = pendingList
+        .slice(0, 15)
+        .map(
+          item =>
+            `- **${item.student.name}** (\`${item.student.regId}\`) • Course: **${item.student.course}** • Paid: ₹${item.paid.toLocaleString('en-IN')} / ₹${item.student.netFee.toLocaleString('en-IN')} • **Pending Due: ₹${item.due.toLocaleString('en-IN')}** • Phone: \`${item.student.phone || 'Not provided'}\``
+        );
+
+      return {
+        success: true,
+        records: pendingList.map(i => i.student),
+        summary: `### 💳 Pending Fees Summary (${pendingList.length} Students • Total Receivable: ₹${totalPending.toLocaleString('en-IN')})\n${lines.join('\n')}`
+      };
+    },
+
+    getAttendanceSummary: async (args) => {
+      const current = stateRef.current;
+      const bf = String(args?.batch || '').trim().toLowerCase();
+      const belowOnly = Boolean(args?.belowThresholdOnly);
+      const activeStudents = current.students.filter(
+        s => s.status === 'Active' && (!bf || (s.batch || '').toLowerCase().includes(bf))
+      );
+
+      const rows = activeStudents
+        .map(s => ({
+          student: s,
+          pct: getStudentAttendancePct(s.id, current)
+        }))
+        .filter(r => (belowOnly ? r.pct < 75 : true))
+        .sort((a, b) => a.pct - b.pct);
+
+      const avgAtt =
+        activeStudents.length > 0
+          ? Math.round(
+              activeStudents.reduce((sum, s) => sum + getStudentAttendancePct(s.id, current), 0) /
+                activeStudents.length
+            )
+          : 100;
+
+      const lines = rows
+        .slice(0, 15)
+        .map(
+          r =>
+            `- **${r.student.name}** (\`${r.student.regId}\`) • Batch: \`${r.student.batch || 'Unassigned'}\` • Attendance: **${r.pct}%**`
+        );
+
+      return {
+        success: true,
+        records: rows.map(r => r.student),
+        summary: `### 📅 Attendance Summary (Institute Avg: ${avgAtt}%)\n${
+          lines.length > 0 ? lines.join('\n') : 'No students matched the specified attendance filter.'
+        }`
+      };
+    },
+
+    generateCRMReports: async (args) => {
+      const current = stateRef.current;
+      const rt = String(args?.reportType || 'full_executive').toLowerCase();
+      const days = Number(args?.days || 7);
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - Math.max(1, days));
+      const cutoffIso = cutoffDate.toISOString().slice(0, 10);
+
+      if (rt === 'today_admissions') {
+        const todayStudents = current.students.filter(
+          s => s.enrollDate === LIVE_TODAY_ISO || s.joinDate === LIVE_TODAY_ISO
+        );
+        const todayLeads = current.leads.filter(l => l.enquiryDate === LIVE_TODAY_ISO);
+        const stuLines = todayStudents.map(s => {
+          const paid = (s.milestones || [])
+            .filter(m => m.status === 'Paid')
+            .reduce((sum, m) => sum + m.amount, 0);
+          return `- **${s.name}** (\`${s.regId}\`) • Course: **${s.course}** • Batch: \`${s.batch}\` • Paid: **₹${paid.toLocaleString('en-IN')}** / ₹${s.netFee.toLocaleString('en-IN')}`;
+        });
+        return {
+          success: true,
+          summary: `### 📊 Today's Admissions & Inquiries Summary (${LIVE_TODAY_ISO})\n- **Today's New Admissions**: **${todayStudents.length}**\n- **Today's New Inquiries**: **${todayLeads.length}**\n- **Total Active Students**: **${current.students.filter(s => s.status === 'Active').length}**\n\n${
+            stuLines.length > 0
+              ? `#### Today's Enrolled Students\n${stuLines.join('\n')}`
+              : `_No new admissions recorded specifically with today's date (${LIVE_TODAY_ISO}). Showing latest enrolled students:_\n` +
+                current.students
+                  .slice(0, 5)
+                  .map(s => `- **${s.name}** (\`${s.regId}\`) • **${s.course}** • Enrolled: \`${s.enrollDate}\``)
+                  .join('\n')
+          }`
+        };
+      }
+
+      if (rt === 'recent_records') {
+        const recentStudents = current.students.filter(s => (s.enrollDate || '') >= cutoffIso);
+        const recentLeads = current.leads.filter(l => (l.enquiryDate || '') >= cutoffIso);
+        const sLines = recentStudents
+          .slice(0, 10)
+          .map(s => `- **Student**: **${s.name}** (\`${s.regId}\`) • ${s.course} • Date: \`${s.enrollDate}\``);
+        const lLines = recentLeads
+          .slice(0, 10)
+          .map(l => `- **Lead**: **${l.name}** (\`${l.id}\`) • ${l.course} • Stage: **${l.stage}** • Date: \`${l.enquiryDate}\``);
+        return {
+          success: true,
+          summary: `### 🗓️ Records Added in the Last ${days} Days (Since ${cutoffIso})\n- **New Students**: **${recentStudents.length}**\n- **New Inquiries**: **${recentLeads.length}**\n\n${
+            [...sLines, ...lLines].join('\n') || 'No records found within this date window.'
+          }`
+        };
+      }
+
+      // Default full executive report
+      const totalBilled = current.students.reduce((sum, s) => sum + s.netFee, 0);
+      const totalCollected = current.students.reduce(
+        (sum, s) =>
+          sum +
+          (s.milestones || [])
+            .filter(m => m.status === 'Paid')
+            .reduce((mSum, m) => mSum + m.amount, 0),
+        0
+      );
+      const totalPending = Math.max(0, totalBilled - totalCollected);
+      const courseBreakdown = current.courses.map(c => {
+        const enrolled = current.students.filter(
+          s => s.status === 'Active' && s.course.toLowerCase() === c.name.toLowerCase()
+        ).length;
+        return `- **${c.name}** (Fee: ₹${c.fee.toLocaleString('en-IN')}) • Instructor: **${c.instructor}** • Active Students: **${enrolled}**`;
+      });
+
+      return {
+        success: true,
+        summary: `### 📈 Srujaan Share Market Institute — Executive CRM Report\n- **Total Enrolled Students**: **${current.students.length}** (${current.students.filter(s => s.status === 'Active').length} Active)\n- **Total Inquiries / Leads**: **${current.leads.length}** (${current.leads.filter(l => l.stage === 'Admission Confirmed').length} Converted)\n- **Total Fee Collected**: **₹${totalCollected.toLocaleString('en-IN')}** / Billed: **₹${totalBilled.toLocaleString('en-IN')}**\n- **Total Pending Receivables**: **₹${totalPending.toLocaleString('en-IN')}**\n\n#### Course Enrollment Breakdown\n${courseBreakdown.join('\n')}`
+      };
+    },
+
+    bulkUpdateLeads: async (args) => {
+      const current = stateRef.current;
+      const fs = String(args?.fromStatusOrStage || '').trim().toLowerCase();
+      const targetStage = String(args?.toStatusOrStage || 'Follow-up Required').trim() as LeadStage;
+
+      const matchingLeads = current.leads.filter(l => {
+        const stageMatch =
+          !fs ||
+          l.stage.toLowerCase().includes(fs) ||
+          (fs === 'interested' &&
+            (l.intent.toLowerCase() === 'hot' ||
+              l.stage.toLowerCase().includes('interested') ||
+              l.stage.toLowerCase().includes('counselling') ||
+              l.stage.toLowerCase().includes('demo')));
+        return stageMatch;
+      });
+
+      if (matchingLeads.length === 0) {
+        return {
+          success: false,
+          updatedCount: 0,
+          summary: `No leads matched the filter (${args?.fromStatusOrStage ? `Stage: "${args.fromStatusOrStage}"` : 'All'}).`
+        };
+      }
+
+      const matchIds = new Set(matchingLeads.map(l => l.id));
+      const nowIso = new Date().toISOString();
+      const updatedLeadsList: Lead[] = [];
+
+      updateAndPersistState(prev => ({
+        ...prev,
+        leads: prev.leads.map(l => {
+          if (!matchIds.has(l.id)) return l;
+          const nextLead: Lead = {
+            ...l,
+            stage: targetStage,
+            lastContact: LIVE_TODAY_ISO,
+            ...({ updatedBy: getCurrentActorEmail(), updatedAt: nowIso } as any)
+          };
+          updatedLeadsList.push(nextLead);
+          return nextLead;
+        })
+      }));
+
+      updatedLeadsList.forEach(l => {
+        saveLeadToFirestore(l).catch(() => {});
+      });
+      scheduleEnrollmentOrLeadCloudSync();
+      logAudit(
+        'Lead',
+        'AI Bulk Updated Leads',
+        `${matchingLeads.length} Leads`,
+        `Changed stage to ${targetStage}`
+      );
+      showToast(`✅ Updated ${matchingLeads.length} leads to "${targetStage}"`);
+
+      return {
+        success: true,
+        updatedCount: matchingLeads.length,
+        summary:
+          `Updated **${matchingLeads.length}** lead(s) to stage **${targetStage}**:\n` +
+          matchingLeads
+            .slice(0, 10)
+            .map(l => `- **${l.name}** (\`${l.id}\` • ${l.course}) → **${targetStage}**`)
+            .join('\n')
       };
     }
   };

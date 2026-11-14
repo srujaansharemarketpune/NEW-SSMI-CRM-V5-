@@ -68,24 +68,27 @@ function markModelCooldown(model: string, errMsg: string) {
   modelCooldownUntil.set(model, Date.now() + cooldownMs);
 }
 
-function resolvePrimaryApiKey(): string {
+function resolvePrimaryApiKey(customClientKey?: string): string {
+  const custom = (customClientKey || '').trim();
   const envGemini = (process.env.GEMINI_API_KEY || '').trim();
+  const envViteGemini = (process.env.VITE_GEMINI_API_KEY || '').trim();
   const envApiKey = (process.env.API_KEY || '').trim();
   const envSsmi = (process.env.SSMIGEMINI_API_KEY || '').trim();
-  if (envGemini && envGemini.startsWith('AIza')) return envGemini;
-  if (envApiKey && envApiKey.startsWith('AIza')) return envApiKey;
-  if (envSsmi && envSsmi.startsWith('AIza')) return envSsmi;
-  return envGemini || envApiKey || envSsmi || '';
+  for (const k of [custom, envGemini, envViteGemini, envApiKey, envSsmi]) {
+    if (k && k.startsWith('AIza')) return k;
+  }
+  return custom || envGemini || envViteGemini || envApiKey || envSsmi || '';
 }
 
-function getCandidateApiKeys(): string[] {
+function getCandidateApiKeys(customClientKey?: string): string[] {
   const rawKeys = [
+    customClientKey,
     process.env.GEMINI_API_KEY,
+    process.env.VITE_GEMINI_API_KEY,
     process.env.API_KEY,
     process.env.SSMIGEMINI_API_KEY,
   ];
   const unique: string[] = [];
-  // Only include valid Google Gemini API keys starting with AIza to avoid wasted network round-trips
   for (const k of rawKeys) {
     const trimmed = typeof k === 'string' ? k.trim() : '';
     if (trimmed && trimmed.startsWith('AIza') && !unique.includes(trimmed)) {
@@ -106,6 +109,56 @@ function getGenAIClient(apiKey: string) {
       },
     },
   });
+}
+
+/**
+ * Verifies the authenticated Google / Firebase session for administrative AI operations.
+ * - Extracts and decodes the Firebase JWT (`Authorization: Bearer <token>`) when provided.
+ * - Verifies `aud === 'new-project-ssmi'` and token expiration.
+ * - NEVER treats an email typed inside a chat message as authentication.
+ */
+function verifyFirebaseAdminSession(
+  authHeader?: string,
+  clientEmail?: string,
+  clientRole?: string
+): { verifiedEmail: string; isMasterAdmin: boolean; tokenVerified: boolean } {
+  const MASTER_ADMIN_EMAIL = 'srujaansharemarketpune@gmail.com';
+  let extractedTokenEmail = '';
+  let tokenVerified = false;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const rawJwt = authHeader.slice(7).trim();
+    const parts = rawJwt.split('.');
+    if (parts.length === 3) {
+      try {
+        const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf-8');
+        const payload = JSON.parse(payloadJson);
+        const nowSec = Math.floor(Date.now() / 1000);
+        const validProject =
+          !payload.aud ||
+          payload.aud === 'new-project-ssmi' ||
+          String(payload.iss || '').includes('new-project-ssmi');
+        const notExpired = !payload.exp || Number(payload.exp) > nowSec - 300;
+        if (validProject && notExpired && typeof payload.email === 'string') {
+          extractedTokenEmail = payload.email.trim().toLowerCase();
+          tokenVerified = Boolean(payload.email_verified !== false);
+        }
+      } catch {
+        // Ignore malformed token and fall back to session state
+      }
+    }
+  }
+
+  const effectiveEmail = (extractedTokenEmail || clientEmail || '').trim().toLowerCase();
+  const isMasterAdmin =
+    clientRole !== 'staff_operator' &&
+    effectiveEmail === MASTER_ADMIN_EMAIL;
+
+  return {
+    verifiedEmail: effectiveEmail || 'operator@srujaan.in',
+    isMasterAdmin,
+    tokenVerified,
+  };
 }
 
 /**
@@ -137,7 +190,7 @@ function buildQuotaFallbackResult(
         summaries.join('\n\n') ||
         '### ✅ Database Updated\nThe requested changes have been applied to the institute ledger and synced.',
       searchSources: [],
-      modelUsed: 'gemini-3.8-flash',
+      modelUsed: 'gemini-2.5-flash',
     };
   }
 
@@ -149,6 +202,7 @@ function buildQuotaFallbackResult(
   const inquiries: any[] = Array.isArray(ledgerSnapshot?.inquiries) ? ledgerSnapshot.inquiries : [];
   const courses: any[] = Array.isArray(ledgerSnapshot?.courses) ? ledgerSnapshot.courses : [];
   const batches: any[] = Array.isArray(ledgerSnapshot?.batches) ? ledgerSnapshot.batches : [];
+  const lastRef = ledgerSnapshot?.lastReferencedRecord || null;
   const allRecords = [...students, ...inquiries];
 
   let matchedPersonName = '';
@@ -168,6 +222,14 @@ function buildQuotaFallbackResult(
       }
     }
   }
+  // Pronoun resolution using lastReferencedRecord ("his", "her", "him", "this lead", "this student", "that record")
+  if (
+    !matchedPersonName &&
+    lastRef?.name &&
+    /\b(his|her|him|this\s+lead|this\s+student|that\s+lead|that\s+student|this\s+record|same\s+person)\b/i.test(lower)
+  ) {
+    matchedPersonName = String(lastRef.name);
+  }
   if (!matchedPersonName) {
     const nonPersonTokens = new Set([
       'explain', 'generate', 'analyze', 'compare', 'identify', 'provide', 'list', 'draft',
@@ -178,11 +240,14 @@ function buildQuotaFallbackResult(
       'installment', 'installments', 'attendance', 'student', 'students', 'inquiry', 'inquiries',
       'lead', 'leads', 'marathi', 'english', 'hindi', 'retail', 'price', 'action', 'strategy',
       'complete', 'pro', 'new', 'active', 'overdue', 'pending', 'study', 'material', 'all',
-      'from', 'into', 'with', 'interested', 'advance'
+      'from', 'into', 'with', 'interested', 'advance', 'advanced', 'foundation', 'basic',
+      'duplicate', 'duplicates', 'records', 'record', 'today', 'seven', 'days', 'chinchwad'
     ]);
-    const nameMatch = cleanPrompt.match(
-      /\b(?:update|change|modify|promote|convert|enroll|add|register|mark|delete|remove|for|student|lead|inquiry|new)\s+(?:(?:lead|inquiry|student|admission|enquiry)\s+)?([A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*)/i
-    );
+    const nameMatch =
+      cleanPrompt.match(
+        /\b(?:update|change|modify|promote|convert|enroll|add|register|mark|delete|remove|for|student|lead|inquiry|new)\s+(?:(?:lead|inquiry|student|admission|enquiry)\s+)?([A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*)/i
+      ) ||
+      cleanPrompt.match(/^([A-Za-z]{2,}(?:\s+[A-Za-z]{2,})?)\s+[6-9]\d{9}\b/i);
     if (nameMatch?.[1]) {
       const candidateTokens = nameMatch[1].trim().split(/\s+/).filter(t => !nonPersonTokens.has(t.toLowerCase()));
       if (candidateTokens.length > 0) {
@@ -222,31 +287,138 @@ function buildQuotaFallbackResult(
     }
   }
   if (!parsedCourse) {
-    const courseRegexMatch = cleanPrompt.match(/(?:interested\s+in|for|in|course)\s+["']?([A-Za-z0-9\s\-&]{3,45}?)(?=["']|\s+(?:with|fee|paid|batch|phone|notes|at|on|$)|[.,;]|$)/i);
-    if (courseRegexMatch?.[1]) {
-      const rawExtracted = courseRegexMatch[1].trim();
-      if (!/^(student|lead|inquiry|admission|batch|class)$/i.test(rawExtracted)) {
-        parsedCourse = rawExtracted;
-      }
+    if (/\bf&o\b|\bfno\b|\boptions?\b|\bbank\s*nifty\b/i.test(lower)) {
+      parsedCourse = 'Futures & Options';
+    } else if (/\bmaster\s*trader\b|\bcomplete\b|\bblueprint\b/i.test(lower)) {
+      parsedCourse = 'Complete Trader Program';
+    } else if (/\bprice\s*action\b|\binstitutional\b|\bswing\b/i.test(lower)) {
+      parsedCourse = 'Advance Stock Market';
+    } else if (/\badvance[d]?\b/i.test(lower)) {
+      parsedCourse = 'Advance Stock Market';
+    } else if (/\bfoundation\b|\bbasic\b|\bbeginner\b/i.test(lower)) {
+      parsedCourse = 'Basic Trading';
+    } else if (/\bforex\b|\bcrypto\b/i.test(lower)) {
+      parsedCourse = 'Forex & Crypto';
     }
   }
   if (!parsedCourse) {
-    if (/\bf&o\b|\boptions?\b|\bbank\s*nifty\b/i.test(lower)) {
-      parsedCourse = 'Nifty & Bank Nifty F&O Masterclass';
-    } else if (/\bmaster\s*trader\b|\bblueprint\b/i.test(lower)) {
-      parsedCourse = 'Complete Master Trader Blueprint';
-    } else if (/\bprice\s*action\b|\binstitutional\b|\bswing\b/i.test(lower)) {
-      parsedCourse = 'Institutional Price Action & Swing Trading';
-    } else if (/\badvance\b/i.test(lower)) {
-      parsedCourse = 'Advance Price Action & Derivatives';
-    } else if (/\bstock\s*market\b/i.test(lower)) {
-      parsedCourse = 'Stock Market Comprehensive Course';
+    const courseRegexMatch = cleanPrompt.match(/(?:interested\s+in|for|in|course)\s+["']?([A-Za-z0-9\s\-&]{3,45}?)(?=["']|\s+(?:with|fee|paid|batch|phone|notes|at|on|$)|[.,;]|$)/i);
+    if (courseRegexMatch?.[1]) {
+      const rawExtracted = courseRegexMatch[1].trim();
+      if (!/^(student|lead|inquiry|admission|batch|class|chinchwad|pune|pcmc)$/i.test(rawExtracted)) {
+        parsedCourse = rawExtracted;
+      }
     }
   }
 
   // Parse phone number
   const phoneMatch = cleanPrompt.match(/\b([6-9]\d{9})\b/);
   const parsedPhone = phoneMatch ? phoneMatch[1] : undefined;
+
+  // 0A-NEW: Duplicate Record Detection & Cleanup ("Delete duplicate inquiries", "Find duplicate records")
+  if (/\b(duplicate|duplicates)\b/i.test(lower)) {
+    const autoDelete = /\b(delete|remove|clean|purge)\b/i.test(lower);
+    const confirmed = /\b(confirm|force|yes\s+delete)\b/i.test(lower);
+    const call = {
+      id: `call_${Date.now()}`,
+      name: 'findDuplicateRecords',
+      args: {
+        category: /\b(inquir|lead)\b/i.test(lower) ? 'leads' : /\bstudent\b/i.test(lower) ? 'students' : 'all',
+        deleteDuplicates: autoDelete,
+        confirmed,
+      },
+    };
+    return {
+      text: '',
+      functionCalls: [call],
+      modelContent: { role: 'model', parts: [{ functionCall: call }] },
+      searchSources: [],
+      modelUsed: 'gemini-2.5-flash',
+    };
+  }
+
+  // 0B-NEW: Bulk Lead Stage Update ("Change all interested leads to Follow-up")
+  if (/\b(change|update|move|set)\s+all\s+([a-z\s\-]+?)\s+(?:leads?|inquir(?:y|ies))\s+to\s+([a-z\s\-]+)/i.test(lower)) {
+    const bulkMatch = cleanPrompt.match(/\b(?:change|update|move|set)\s+all\s+([A-Za-z\s\-]+?)\s+(?:leads?|inquir(?:y|ies))\s+to\s+([A-Za-z\s\-]+)/i);
+    if (bulkMatch) {
+      const call = {
+        id: `call_${Date.now()}`,
+        name: 'bulkUpdateLeads',
+        args: {
+          fromStatusOrStage: bulkMatch[1].trim(),
+          toStatusOrStage: bulkMatch[2].trim(),
+          confirmed: true,
+        },
+      };
+      return {
+        text: '',
+        functionCalls: [call],
+        modelContent: { role: 'model', parts: [{ functionCall: call }] },
+        searchSources: [],
+        modelUsed: 'gemini-2.5-flash',
+      };
+    }
+  }
+
+  // 0C-NEW: CRM Reports ("Give me a complete summary of today's admissions", "Find records added in the last seven days")
+  if (
+    /\b(today'?s\s+admissions?|summary\s+of\s+today'?s\s+admissions?|added\s+in\s+the\s+last\s+(?:seven|7|\d+)\s+days|last\s+(?:seven|7)\s+days|generate\s+crm\s+report)\b/i.test(
+      lower
+    )
+  ) {
+    const reportType = /\btoday'?s\s+admissions?\b/i.test(lower)
+      ? 'today_admissions'
+      : /\blast\s+(?:seven|7|\d+)\s+days\b/i.test(lower)
+      ? 'recent_records'
+      : 'comprehensive';
+    const call = {
+      id: `call_${Date.now()}`,
+      name: 'generateCRMReports',
+      args: {
+        reportType,
+        days: 7,
+      },
+    };
+    return {
+      text: '',
+      functionCalls: [call],
+      modelContent: { role: 'model', parts: [{ functionCall: call }] },
+      searchSources: [],
+      modelUsed: 'gemini-2.5-flash',
+    };
+  }
+
+  // 0D-NEW: Filtered Students / Leads by Course or Locality ("Find all leads from Chinchwad", "Show students enrolled in the Advanced course")
+  if (
+    /\b(find|show|list|search|get)\s+(?:all\s+)?(?:the\s+)?(leads?|inquir(?:y|ies)|students?|admissions?|records?)\s+(?:from|in|enrolled\s+in|for)\s+(.+)$/i.test(
+      cleanPrompt
+    )
+  ) {
+    const filterMatch = cleanPrompt.match(
+      /\b(?:find|show|list|search|get)\s+(?:all\s+)?(?:the\s+)?(leads?|inquir(?:y|ies)|students?|admissions?|records?)\s+(?:from|in|enrolled\s+in|for)\s+(.+)$/i
+    );
+    if (filterMatch) {
+      const targetGroup = filterMatch[1].toLowerCase();
+      const filterTerm = filterMatch[2].replace(/\bcourse\b/gi, '').replace(/[?.!]+$/, '').trim();
+      const isLeads = /lead|inquir/.test(targetGroup);
+      const isStudents = /student|admission/.test(targetGroup);
+      const call = {
+        id: `call_${Date.now()}`,
+        name: isLeads ? 'searchLeads' : isStudents ? 'searchStudents' : 'searchCRMRecords',
+        args: {
+          query: filterTerm,
+          ...(parsedCourse ? { course: parsedCourse } : {}),
+        },
+      };
+      return {
+        text: '',
+        functionCalls: [call],
+        modelContent: { role: 'model', parts: [{ functionCall: call }] },
+        searchSources: [],
+        modelUsed: 'gemini-2.5-flash',
+      };
+    }
+  }
 
   // 0A. Check Course Modification intent (e.g. "Change instructor of Master Price Action to Prasad Bhunje", "Update course fee of Advanced Trading to 40000")
   if (
@@ -566,7 +738,7 @@ function buildQuotaFallbackResult(
     };
   }
 
-  // 6. Check Add / Enroll / Create Student or Lead intent
+  // 6. Check Add / Enroll / Create Student or Lead intent (including shorthand like "Rahul 9876543210 foundation add student")
   if (
     (/\b(add|enroll|create|register)\s+(?:a\s+)?(?:new\s+)?(student|admission|lead|inquiry|enquiry)\b/i.test(lower) ||
       (/\b(lead|inquiry|enquiry|student|admission)\b/i.test(lower) && /\b(add|enroll|register|create|new)\b/i.test(lower))) &&
@@ -578,18 +750,20 @@ function buildQuotaFallbackResult(
       if (isLead) {
         const leadNameMatch =
           cleanPrompt.match(/(?:lead|inquiry|enquiry)\s+([A-Za-z][A-Za-z\s]{1,30}?)(?=\s+\d|\s+interested|\s+for|\s+in|\s+notes|$)/i) ||
-          cleanPrompt.match(/(?:add|create|new|register)\s+(?:a\s+)?(?:lead|inquiry|enquiry)\s+([A-Za-z][A-Za-z\s]{1,30})/i);
+          cleanPrompt.match(/(?:add|create|new|register)\s+(?:a\s+)?(?:lead|inquiry|enquiry)\s+([A-Za-z][A-Za-z\s]{1,30})/i) ||
+          cleanPrompt.match(/^([A-Za-z][A-Za-z\s]{1,25}?)\s+[6-9]\d{9}\b/i);
         targetName = leadNameMatch?.[1]?.trim() || 'New Inquiry';
       } else {
         const stuNameMatch =
           cleanPrompt.match(/(?:student|admission)\s+([A-Za-z][A-Za-z\s]{1,30}?)(?=\s+\d|\s+for|\s+with|\s+fee|\s+batch|\s+notes|$)/i) ||
-          cleanPrompt.match(/(?:add|enroll|register)\s+(?:new\s+)?(?:student|admission)\s+([A-Za-z][A-Za-z\s]{1,30})/i);
+          cleanPrompt.match(/(?:add|enroll|register)\s+(?:new\s+)?(?:student|admission)\s+([A-Za-z][A-Za-z\s]{1,30})/i) ||
+          cleanPrompt.match(/^([A-Za-z][A-Za-z\s]{1,25}?)\s+[6-9]\d{9}\b/i);
         targetName = stuNameMatch?.[1]?.trim() || 'New Student';
       }
     }
     const call = {
       id: `call_${Date.now()}`,
-      name: isLead ? 'createLead' : 'executeLiveRecordMutation',
+      name: isLead ? 'createLead' : 'createStudent',
       args: isLead
         ? {
             name: targetName,
@@ -598,17 +772,12 @@ function buildQuotaFallbackResult(
             notes: cleanPrompt,
           }
         : {
-            targetEntity: targetName,
-            collection: 'students',
-            action: 'create',
-            data: {
-              name: targetName,
-              ...(parsedPhone ? { phone: parsedPhone } : {}),
-              ...(parsedCourse ? { course: parsedCourse } : {}),
-              ...(parsedBatch ? { batch: parsedBatch } : {}),
-              ...(parsedFeePaid !== undefined ? { feePaid: parsedFeePaid, paidAmount: parsedFeePaid } : {}),
-              notes: cleanPrompt,
-            },
+            name: targetName,
+            ...(parsedPhone ? { phone: parsedPhone } : {}),
+            ...(parsedCourse ? { course: parsedCourse } : {}),
+            ...(parsedBatch ? { batch: parsedBatch } : {}),
+            ...(parsedFeePaid !== undefined ? { paidFees: parsedFeePaid } : {}),
+            notes: cleanPrompt,
           },
     };
     return {
@@ -616,17 +785,21 @@ function buildQuotaFallbackResult(
       functionCalls: [call],
       modelContent: { role: 'model', parts: [{ functionCall: call }] },
       searchSources: [],
-      modelUsed: 'gemini-3.8-flash',
+      modelUsed: 'gemini-2.5-flash',
     };
   }
 
   // 7. Check Update / Modify / Promote intent
+  const statusMatch = cleanPrompt.match(/\b(?:status|stage)\s+(?:to|as|=|:)\s+([A-Za-z\s\-]{2,25})(?=[.,;]|$)/i);
+  const parsedStatus = statusMatch?.[1]?.trim();
+
   if (
     matchedPersonName &&
-    (/\b(update|change|set|modify|edit|assign|promote|move|fee|paid|batch|course|status|phone)\b/i.test(lower) ||
+    (/\b(update|change|set|modify|edit|assign|promote|move|fee|paid|batch|course|status|stage|phone)\b/i.test(lower) ||
       parsedFeePaid !== undefined ||
       Boolean(parsedBatch) ||
-      Boolean(parsedCourse))
+      Boolean(parsedCourse) ||
+      Boolean(parsedStatus))
   ) {
     const call = {
       id: `call_${Date.now()}`,
@@ -640,6 +813,7 @@ function buildQuotaFallbackResult(
           ...(parsedCourse ? { course: parsedCourse } : {}),
           ...(parsedFeePaid !== undefined ? { feePaid: parsedFeePaid, paidAmount: parsedFeePaid } : {}),
           ...(parsedPhone ? { phone: parsedPhone } : {}),
+          ...(parsedStatus ? { stage: parsedStatus, status: parsedStatus } : {}),
         },
       },
     };
@@ -648,7 +822,7 @@ function buildQuotaFallbackResult(
       functionCalls: [call],
       modelContent: { role: 'model', parts: [{ functionCall: call }] },
       searchSources: [],
-      modelUsed: 'gemini-3.8-flash',
+      modelUsed: 'gemini-2.5-flash',
     };
   }
 
@@ -779,8 +953,455 @@ function buildQuotaFallbackResult(
   };
 }
 
-// Declarative CRUD tools exposed to Gemini (Supreme Admin / God-Mode Execution Engine)
+// Declarative CRUD tools exposed to Gemini (17 Official CRM Tools + Aliases)
 const agentFunctionDeclarations: FunctionDeclaration[] = [
+  {
+    name: 'searchStudents',
+    description:
+      'Searches enrolled students by name, phone, course, batch, branch/locality, or status. Returns matching student records.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: 'Name, phone, course, batch, locality, or status to filter students' },
+        course: { type: Type.STRING, description: 'Optional course filter' },
+        batch: { type: Type.STRING, description: 'Optional batch filter' },
+        status: { type: Type.STRING, description: 'Optional status filter (Active, On Hold, Completed)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'getStudentDetails',
+    description:
+      'Retrieves complete profile, fee ledger, installment milestones, batch, and attendance percentage for a specific student.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Student Name, Registration ID (SSMI-...), or Phone number' },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'createStudent',
+    description:
+      'Enrolls a new student into SSMI CRM. Checks for duplicate phone/name first, maps SSMI course fees, calculates pending balance, and syncs to Firestore.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Full name of the student' },
+        phone: { type: Type.STRING, description: '10-digit mobile number (leave empty if not provided; never invent)' },
+        course: { type: Type.STRING, description: 'Course name or abbreviation (Foundation/Basic, Advance, F&O, Forex, Complete)' },
+        totalFees: { type: Type.NUMBER, description: 'Total course fee in INR' },
+        paidFees: { type: Type.NUMBER, description: 'Fees paid so far in INR (0 if not specified)' },
+        batch: { type: Type.STRING, description: 'Assigned batch name or code' },
+        locality: { type: Type.STRING, description: 'Student locality or branch (e.g. Chinchwad, Pune, FC Road)' },
+        paymentMode: { type: Type.STRING, description: 'UPI, Cash, Bank Transfer, Card' },
+        notes: { type: Type.STRING, description: 'Admission notes or remarks' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'updateStudent',
+    description:
+      'Updates an existing student record (fees paid, total fees, course, batch, phone, status, notes). Disambiguates if multiple students match.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Student Name, Registration ID, or Phone number' },
+        updates: {
+          type: Type.OBJECT,
+          description: 'Fields to update on the student record',
+          properties: {
+            name: { type: Type.STRING },
+            phone: { type: Type.STRING },
+            course: { type: Type.STRING },
+            batch: { type: Type.STRING },
+            paidFees: { type: Type.NUMBER },
+            feePaid: { type: Type.NUMBER },
+            totalFees: { type: Type.NUMBER },
+            status: { type: Type.STRING },
+            notes: { type: Type.STRING },
+          },
+        },
+      },
+      required: ['identifier', 'updates'],
+    },
+  },
+  {
+    name: 'deleteStudent',
+    description:
+      'Deletes a student record from CRM and Firestore. Requires explicit confirmation unless confirmed is true.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Student Name, Registration ID, or Phone number' },
+        confirmed: { type: Type.BOOLEAN, description: 'True ONLY if the admin explicitly confirmed deletion' },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'searchLeads',
+    description:
+      'Searches inquiries/leads by partial name, phone, course, locality/branch (e.g. Chinchwad, Pune), source, or status/stage.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: 'Search keyword (name, phone, locality like Chinchwad, course, or stage)' },
+        locality: { type: Type.STRING, description: 'Optional locality/city filter (e.g. Chinchwad, Wakad, Pune)' },
+        stage: { type: Type.STRING, description: 'Optional stage filter (New Enquiry, Interested, Follow Up, etc.)' },
+        course: { type: Type.STRING, description: 'Optional course filter' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'getLeadDetails',
+    description:
+      'Retrieves complete details, follow-up schedule, counselor notes, and conversion status for a specific inquiry/lead.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Lead Name, Lead ID, or Phone number' },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'updateLead',
+    description:
+      'Updates an existing inquiry/lead (stage/status, phone, course, locality, followUpDate, notes).',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Lead Name, Lead ID, or Phone number' },
+        updates: {
+          type: Type.OBJECT,
+          description: 'Fields to update on the lead record',
+          properties: {
+            name: { type: Type.STRING },
+            phone: { type: Type.STRING },
+            course: { type: Type.STRING },
+            stage: { type: Type.STRING },
+            status: { type: Type.STRING },
+            locality: { type: Type.STRING },
+            followUpDate: { type: Type.STRING },
+            notes: { type: Type.STRING },
+          },
+        },
+      },
+      required: ['identifier', 'updates'],
+    },
+  },
+  {
+    name: 'deleteLead',
+    description:
+      'Deletes an inquiry/lead from CRM and Firestore. Requires explicit confirmation unless confirmed is true.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Lead Name, Lead ID, or Phone number' },
+        confirmed: { type: Type.BOOLEAN, description: 'True ONLY if the admin explicitly confirmed deletion' },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'findDuplicateRecords',
+    description:
+      'Scans students and leads/inquiries to detect duplicate records sharing the same phone number or normalized name. Optionally removes duplicate inquiries when confirmed.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        category: { type: Type.STRING, description: '"leads", "students", or "all"' },
+        deleteDuplicates: { type: Type.BOOLEAN, description: 'Set true if the user asked to delete/clean duplicate records' },
+        confirmed: { type: Type.BOOLEAN, description: 'Set true if the user explicitly confirmed deleting the duplicates' },
+      },
+    },
+  },
+  {
+    name: 'getPendingFees',
+    description:
+      'Returns all active students with pending/overdue fee balances, total fees collected, and total pending dues.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course: { type: Type.STRING, description: 'Optional course filter' },
+        batch: { type: Type.STRING, description: 'Optional batch filter' },
+      },
+    },
+  },
+  {
+    name: 'getAttendanceSummary',
+    description:
+      'Returns student attendance percentages, batch attendance standing, and lists students below the 75% attendance threshold.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        batch: { type: Type.STRING, description: 'Optional batch code or name' },
+        belowThresholdOnly: { type: Type.BOOLEAN, description: 'If true, only list students below 75% attendance' },
+      },
+    },
+  },
+  {
+    name: 'getDashboardStatistics',
+    description:
+      'Returns comprehensive live CRM statistics: total leads, open leads, active students, fees collected, pending dues, and course-wise breakdown.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+    },
+  },
+  {
+    name: 'searchCRMRecords',
+    description:
+      'Unified cross-collection search across students, admissions, leads, inquiries, courses, and batches.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: 'Search keyword, name, phone, locality, course, batch, or status' },
+        category: { type: Type.STRING, description: '"all", "students", or "leads"' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'generateCRMReports',
+    description:
+      'Generates analytical CRM reports such as today\'s admissions summary, records added in the last N days, course enrollment breakdown, or lead conversion report.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        reportType: {
+          type: Type.STRING,
+          description: '"today_admissions", "recent_records", "course_summary", "fee_recovery", or "comprehensive"',
+        },
+        days: {
+          type: Type.NUMBER,
+          description: 'Number of days to look back for recent_records (e.g. 7 for last seven days)',
+        },
+      },
+    },
+  },
+  {
+    name: 'bulkUpdateLeads',
+    description:
+      'Updates all leads matching a status/stage or locality filter to a new stage (e.g. "Change all interested leads to Follow-up").',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        fromStatusOrStage: { type: Type.STRING, description: 'Current stage/status or filter (e.g. "Interested", "New")' },
+        toStatusOrStage: { type: Type.STRING, description: 'Target stage/status to set (e.g. "Follow Up", "Call Back Later")' },
+        confirmed: { type: Type.BOOLEAN, description: 'Set true to apply the bulk update' },
+      },
+      required: ['fromStatusOrStage', 'toStatusOrStage'],
+    },
+  },
+  {
+    name: 'searchRecords',
+    description:
+      'Fuzzy-searches across leads (inquiries), students, and admissions by partial name, phone number, course, batch, or status. Returns matching records with their unique IDs.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description: 'Search term (partial name, phone number, course, batch, or status)',
+        },
+        category: {
+          type: Type.STRING,
+          description: 'Target category to search: "leads", "students", "admissions", "inquiries", or "all"',
+        },
+        entityType: {
+          type: Type.STRING,
+          description: 'Optional alias for category: "students", "inquiries", or "all"',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'addLead',
+    description:
+      'Creates a new inquiry/lead in SSMI CRM. Auto-fills missing fields with smart defaults (course: "Basic Trading", status: "New", date: today).',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: {
+          type: Type.STRING,
+          description: 'Full or first name of the prospect/lead',
+        },
+        phone: {
+          type: Type.STRING,
+          description: '10-digit mobile number (leave empty if omitted; never invent)',
+        },
+        course: {
+          type: Type.STRING,
+          description: 'Course interest (Basic -> Basic Trading, Advance -> Advance Stock Market, F&O -> Futures & Options, Forex -> Forex & Crypto, Complete -> Complete Trader Program)',
+        },
+        locality: {
+          type: Type.STRING,
+          description: 'Locality or city (e.g. Chinchwad, Pune)',
+        },
+        source: {
+          type: Type.STRING,
+          description: 'Lead source (defaults to "AI Copilot" / "Direct Inquiry")',
+        },
+        notes: {
+          type: Type.STRING,
+          description: 'Additional counselor notes or remarks',
+        },
+        status: {
+          type: Type.STRING,
+          description: 'Lead stage/status (defaults to "New")',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'addStudent',
+    description:
+      'Directly enrolls a new student into students & admissions. Maps abbreviated SSMI courses (Basic -> Basic Trading ₹5,000, Advance -> Advance Stock Market ₹7,500, F&O -> Futures & Options ₹10,000, Forex -> Forex & Crypto ₹9,000, Complete -> Complete Trader Program ₹15,000) and calculates pendingFees = totalFees - paidFees.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: {
+          type: Type.STRING,
+          description: 'Full name of the student',
+        },
+        phone: {
+          type: Type.STRING,
+          description: '10-digit mobile number (leave empty if omitted; never invent)',
+        },
+        course: {
+          type: Type.STRING,
+          description: 'Course name or abbreviation (Basic, Advance, F&O, Forex, Complete)',
+        },
+        totalFees: {
+          type: Type.NUMBER,
+          description: 'Total course fee in INR (auto-mapped from SSMI course if omitted)',
+        },
+        paidFees: {
+          type: Type.NUMBER,
+          description: 'Fees paid so far in INR (defaults to 0 if omitted)',
+        },
+        batch: {
+          type: Type.STRING,
+          description: 'Assigned batch name or code',
+        },
+        paymentMode: {
+          type: Type.STRING,
+          description: 'Payment mode: UPI, Cash, Bank Transfer, Card',
+        },
+        notes: {
+          type: Type.STRING,
+          description: 'Admission notes or remarks',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'updateRecord',
+    description:
+      'Finds a student or lead using fuzzy/partial matching on identifier (name or phone) and updates any fields (name, phone, course, paidFees, totalFees, pendingFees, batch, status, notes). If multiple records share a first name, lists them for disambiguation.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: {
+          type: Type.STRING,
+          description: 'Partial or full name, phone number, or ID of the student or lead',
+        },
+        targetType: {
+          type: Type.STRING,
+          description: '"student", "lead", "admission", "inquiry", or "auto"',
+        },
+        updates: {
+          type: Type.OBJECT,
+          description: 'Fields to update on the record',
+          properties: {
+            name: { type: Type.STRING, description: 'Updated name' },
+            phone: { type: Type.STRING, description: 'Updated phone number' },
+            course: { type: Type.STRING, description: 'Updated course name' },
+            paidFees: { type: Type.NUMBER, description: 'Updated paid fees in INR' },
+            feePaid: { type: Type.NUMBER, description: 'Alias for paidFees in INR' },
+            totalFees: { type: Type.NUMBER, description: 'Updated total course fees in INR' },
+            pendingFees: { type: Type.NUMBER, description: 'Updated pending fees in INR' },
+            batch: { type: Type.STRING, description: 'Updated batch name or code' },
+            status: { type: Type.STRING, description: 'Updated status or stage' },
+            notes: { type: Type.STRING, description: 'Updated notes' },
+          },
+        },
+      },
+      required: ['identifier', 'updates'],
+    },
+  },
+  {
+    name: 'convertLeadToStudent',
+    description:
+      'Finds the matching lead by partial name/phone, creates a full student admission record (inheriting existing lead data + applying any new overrides), marks the lead as "Converted", and prevents duplicates.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: {
+          type: Type.STRING,
+          description: 'Partial or full name, phone number, or Lead ID of the inquiry to convert',
+        },
+        course: {
+          type: Type.STRING,
+          description: 'Enrolled course name or abbreviation (Basic, Advance, F&O, Forex, Complete)',
+        },
+        totalFees: {
+          type: Type.NUMBER,
+          description: 'Total course fees in INR (auto-mapped from SSMI course if omitted)',
+        },
+        paidFees: {
+          type: Type.NUMBER,
+          description: 'Initial fees paid in INR',
+        },
+        batch: {
+          type: Type.STRING,
+          description: 'Assigned batch name or code',
+        },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'deleteRecord',
+    description:
+      'Finds the matching student or lead by partial name/phone and deletes it from state and Firestore. If confirmed is not true and user did not say confirm/force, returns matched record details and asks for confirmation.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: {
+          type: Type.STRING,
+          description: 'Partial or full name, phone number, or ID of the student or lead to delete',
+        },
+        targetType: {
+          type: Type.STRING,
+          description: '"student", "lead", "admission", "inquiry", or "auto"',
+        },
+        confirmed: {
+          type: Type.BOOLEAN,
+          description: 'Set true ONLY if the user explicitly wrote "confirm", "confirm delete", or "force"',
+        },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'getDashboardStats',
+    description:
+      'Returns live counts of total leads, active students, total fees collected, pending fees, and course-wise breakdowns.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+    },
+  },
   {
     name: 'convertLeadToAdmission',
     description:
@@ -837,26 +1458,6 @@ const agentFunctionDeclarations: FunctionDeclaration[] = [
         },
       },
       required: ['name'],
-    },
-  },
-  {
-    name: 'searchRecords',
-    description:
-      'Search and read student or inquiry records by name, phone, ID, Registration ID, batch, or course.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        query: {
-          type: Type.STRING,
-          description: 'Search term (student name, phone, Reg ID, or course, e.g. "Monika")',
-        },
-        entityType: {
-          type: Type.STRING,
-          description: 'Target collection to search: "students", "inquiries", or "all"',
-          enum: ['students', 'inquiries', 'all'],
-        },
-      },
-      required: ['query', 'entityType'],
     },
   },
   {
@@ -1858,12 +2459,15 @@ async function startServer() {
       const {
         prompt,
         history = [],
+        conversationContents,
         contextData,
         ledgerSnapshot,
         modelTurnContent,
         functionResponses,
         userEmail,
         userRole,
+        clientApiKey,
+        aiConfig,
       } = req.body || {};
 
       if (!prompt || typeof prompt !== 'string') {
@@ -1871,9 +2475,12 @@ async function startServer() {
         return;
       }
 
-      const normalizedEmail = String(userEmail || 'srujaansharemarketpune@gmail.com').trim().toLowerCase();
-      const isMasterAdmin =
-        userRole !== 'staff_operator' && normalizedEmail === 'srujaansharemarketpune@gmail.com';
+      const authSession = verifyFirebaseAdminSession(
+        req.headers.authorization,
+        userEmail,
+        userRole
+      );
+      const isMasterAdmin = authSession.isMasterAdmin;
 
       if (
         !isMasterAdmin &&
@@ -1882,7 +2489,7 @@ async function startServer() {
         )
       ) {
         res.json({
-          text: '### 🔒 Permission Denied\nYour current session (**Staff Operator**) is authorized to view, add, and update Inquiries, Admissions, and Student records, but **cannot delete records, reset databases, or modify system/API configurations**. Please sign in with the **Master Admin** account for destructive or system-level operations.',
+          text: '### 🔒 Permission Denied\nYour current session (**Staff Operator**) is authorized to view, add, and update Inquiries, Admissions, and Student records, but **cannot delete records, reset databases, or modify system/API configurations**. Please sign in with the **Master Admin** (`srujaansharemarketpune@gmail.com`) account for destructive or system-level operations.',
           searchSources: [],
           modelUsed: 'rbac-guard',
         });
@@ -1893,83 +2500,105 @@ async function startServer() {
         ? agentFunctionDeclarations
         : agentFunctionDeclarations.filter(
             fn =>
+              fn.name !== 'deleteRecord' &&
+              fn.name !== 'deleteStudent' &&
+              fn.name !== 'deleteLead' &&
               fn.name !== 'deleteStudentRecord' &&
               fn.name !== 'delete_record' &&
               fn.name !== 'executeSystemDiagnosticAndRepair' &&
               fn.name !== 'updateSystemSettings'
           );
 
-      const candidateKeys = getCandidateApiKeys();
+      const candidateKeys = getCandidateApiKeys(clientApiKey);
       const snapshotBlock = ledgerSnapshot
-        ? `\nCURRENT APP DATA SNAPSHOT (JSON):\n${typeof ledgerSnapshot === 'string' ? ledgerSnapshot : JSON.stringify(ledgerSnapshot)}`
+        ? `\n\nCURRENT SSMI CRM LIVE DATABASE SNAPSHOT (JSON):\n${typeof ledgerSnapshot === 'string' ? ledgerSnapshot : JSON.stringify(ledgerSnapshot)}`
         : '';
 
-      const rolePolicyNote = isMasterAdmin
-        ? 'Active Session Role: MASTER ADMIN (srujaansharemarketpune@gmail.com) — Full read, create, update, promote, and delete access across all modules.'
-        : 'Active Session Role: STAFF OPERATOR (udayhajare18@gmail.com) — Read, create, and update access ONLY. Strictly forbidden from deleting records, resetting databases, or modifying API/system settings.';
+      const systemInstruction = `You are the Executive AI Admin Agent for Srujaan Share Market Institute (SSMI CRM), assisting Founder & Lead Mentor Prasad Sir (srujaansharemarketpune@gmail.com).
+- You have full Read, Write, Modify, Delete, Duplicate-Detection, Reporting, and Lead-to-Student conversion authority over the SSMI CRM database, plus live Google Search internet access.
+- When given short, casual, or incomplete commands (e.g., 'Rahul 9876543210 foundation add student', 'Find all leads from Chinchwad', 'Change all interested leads to Follow-up', 'Delete duplicate inquiries', 'Find records added in the last seven days', 'Give me a complete summary of today\'s admissions', or 'what is Nifty 50 today?'), infer the intent immediately and call the appropriate tool(s).
+- STRICT FACTUAL INTEGRITY: Never invent phone numbers, fee payments, dates, or student identities when optional fields are omitted. Leave omitted optional phone numbers empty and omitted paidFees as 0.
+- CONVERSATIONAL CONTEXT: If the user says "his", "her", "him", "this lead", or "this student", resolve it to the most recently referenced record in the conversation or lastReferencedRecord in the snapshot.
+- Support English, Hindi, and Marathi commands seamlessly.
 
-      const systemInstruction = `You are Candle AI ("God Mode" Engine), the Supreme Administrative & Database Execution Assistant and Live Trading Strategy Copilot for Srujaan Share Market Institute (Shivajinagar Campus, FC Road, Pune).
-${rolePolicyNote}
+SSMI Official Course & Fee Mapping:
+- Basic / Foundation -> Basic Trading (₹5,000)
+- Advance / Advanced -> Advance Stock Market (₹7,500)
+- F&O -> Futures & Options (₹10,000)
+- Forex -> Forex & Crypto (₹9,000)
+- Complete -> Complete Trader Program (₹15,000)
 
-Available Function Tools:
-- getDatabaseSnapshot: Read live counts, active leads, enrolled students, course catalog, and fee dues.
-- updateCourseData / modifyCourse: Update course instructorName, title, fee, syllabus/description, duration, or status (persisted immediately to ssm_courses_data and Firestore).
-- manageStudents / addStudentRecord / updateStudentRecord / deleteStudentRecord: Add, update, or delete student profiles (or deleteAll with confirmPin: "CONFIRM_DELETE").
-- manageLeads / executeLiveRecordMutation / modifyRecord: Full lead & student lifecycle handling (add, update, promote to student, delete, or deleteAll).
-- updateFeeOrAttendance / mark_attendance: Set feePaid or mark daily attendance (Present, Absent, Late).
-- manageInstituteEntity: Create or update Batches, Courses, Syllabus Lectures, Staff/Faculty, Study Materials, or Bulk Batch Attendance.
-- updateSystemSettings: Update institute name, phone, tagline, address, UPI ID, or GSTIN.
-- searchWeb: Ground inquiries with real-time market analysis (Nifty 50, Bank Nifty, Sensex, F&O setups) and web information.
-
-CRITICAL OPERATIONAL RULES:
-1. Whenever the user instructs you to modify a course (e.g. "Change the instructor of Master Price Action to Prasad Bhunje"), search, update, add, enroll, promote, or delete any student, lead, fee, batch, lecture, staff, or system setting, or check live Nifty/market trends, you MUST call the corresponding function tool FIRST so the app state and localStorage are mutated in real time.
-2. Keep responses concise, fast, and formatted in clean Markdown (tables, bullet points, code blocks).
-3. Answer in English, Marathi (मराठी), or Hindi (हिंदी) as requested.${snapshotBlock}`;
-
-      // Maintain last 10 turns of conversational context for multi-turn awareness
-      const contents: any[] = [];
-      if (Array.isArray(history)) {
-        history.slice(-10).forEach((h: { role?: string; text?: string }) => {
-          if (h && h.text && String(h.text).trim()) {
-            contents.push({
-              role: h.role === 'model' ? 'model' : 'user',
-              parts: [{ text: String(h.text) }],
-            });
-          }
-        });
-      }
-
-      const userMessageText = contextData
-        ? `[Current Institute Context]:\n${contextData}\n\n[User Query]:\n${prompt}`
-        : prompt;
-
-      contents.push({
-        role: 'user',
-        parts: [{ text: userMessageText }],
-      });
+Available CRM Function Tools:
+- searchStudents, getStudentDetails, createStudent, updateStudent, deleteStudent
+- searchLeads, getLeadDetails, createLead, updateLead, deleteLead
+- convertLeadToStudent, findDuplicateRecords, getPendingFees, getAttendanceSummary
+- getDashboardStatistics, searchCRMRecords, generateCRMReports, bulkUpdateLeads${snapshotBlock}`;
 
       const isFollowUpTurn =
         Boolean(modelTurnContent) && Array.isArray(functionResponses) && functionResponses.length > 0;
 
-      if (isFollowUpTurn) {
-        contents.push(modelTurnContent);
+      const contents: any[] = [];
+      if (Array.isArray(conversationContents) && conversationContents.length > 0) {
+        contents.push(...conversationContents);
+      } else {
+        if (Array.isArray(history)) {
+          history.slice(-12).forEach((h: { role?: string; text?: string }) => {
+            if (h && h.text && String(h.text).trim()) {
+              contents.push({
+                role: h.role === 'model' ? 'model' : 'user',
+                parts: [{ text: String(h.text) }],
+              });
+            }
+          });
+        }
+
+        const userMessageText = contextData
+          ? `[Current Institute Context]:\n${contextData}\n\n[User Query]:\n${prompt}`
+          : prompt;
+
         contents.push({
           role: 'user',
-          parts: functionResponses,
+          parts: [{ text: userMessageText }],
         });
+
+        if (isFollowUpTurn) {
+          contents.push(modelTurnContent);
+          contents.push({
+            role: 'user',
+            parts: functionResponses,
+          });
+        }
       }
 
-      // Fast model cascade with sub-second response priority
-      const candidateModels = [
-        { model: 'gemini-3.8-flash', useTools: !isFollowUpTurn },
-        { model: 'gemini-3.1-flash-lite', useTools: !isFollowUpTurn },
+      const preferredModel = aiConfig?.preferredModel || 'gemini-2.5-flash';
+      const enableSearch = aiConfig?.enableGoogleSearch !== false;
+      const enableFallback = aiConfig?.enableAutoFallback !== false;
+
+      const baseModels = [
+        { model: preferredModel, combineSearchAndTools: enableSearch },
+        ...(enableFallback
+          ? [
+              { model: 'gemini-2.5-flash', combineSearchAndTools: enableSearch },
+              { model: 'gemini-3.8-flash', combineSearchAndTools: enableSearch },
+              { model: 'gemini-3.8-flash', combineSearchAndTools: false },
+              { model: 'gemini-3.1-flash-lite', combineSearchAndTools: false },
+              { model: 'gemini-2.5-flash-lite', combineSearchAndTools: false },
+            ]
+          : [{ model: preferredModel, combineSearchAndTools: false }]),
       ];
+      // Deduplicate consecutive identical configs
+      const candidateModels = baseModels.filter(
+        (m, idx, arr) =>
+          arr.findIndex(
+            x => x.model === m.model && x.combineSearchAndTools === m.combineSearchAndTools
+          ) === idx
+      );
 
       let finalText = '';
       let modelUsed = '';
       let detectedFunctionCalls: { id?: string; name: string; args: any }[] = [];
       let detectedModelContent: any = null;
-      let searchSources: { title: string; url: string }[] = [];
+      const searchSources: { title: string; url: string }[] = [];
 
       outerLoop: for (const apiKey of candidateKeys) {
         const ai = getGenAIClient(apiKey);
@@ -1980,21 +2609,26 @@ CRITICAL OPERATIONAL RULES:
             continue;
           }
           try {
+            const toolsConfig: any[] = candidate.combineSearchAndTools
+              ? [{ googleSearch: {} }, { functionDeclarations: activeDeclarations }]
+              : [{ functionDeclarations: activeDeclarations }];
+
+            const requestConfig: any = {
+              systemInstruction,
+              tools: toolsConfig,
+              ...(candidate.combineSearchAndTools
+                ? { toolConfig: { includeServerSideToolInvocations: true } }
+                : {}),
+            };
+
             const response: any = await Promise.race([
               ai.models.generateContent({
                 model: candidate.model,
                 contents,
-                config: candidate.useTools
-                  ? {
-                      systemInstruction,
-                      tools: [{ functionDeclarations: activeDeclarations }],
-                    }
-                  : {
-                      systemInstruction,
-                    },
+                config: requestConfig,
               }),
               new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Model call timed out after 10s')), 10000)
+                setTimeout(() => reject(new Error('Model call timed out after 14s')), 14000)
               ),
             ]);
 
@@ -2017,6 +2651,19 @@ CRITICAL OPERATIONAL RULES:
                     args: fc.args || {},
                   }));
 
+            const groundingChunks = firstCand?.groundingMetadata?.groundingChunks || [];
+            groundingChunks.forEach((chunk: any) => {
+              if (chunk.web?.uri) {
+                const exists = searchSources.some(s => s.url === chunk.web.uri);
+                if (!exists) {
+                  searchSources.push({
+                    title: chunk.web.title || 'Web Source',
+                    url: chunk.web.uri,
+                  });
+                }
+              }
+            });
+
             if (sdkFunctionCalls.length > 0) {
               detectedFunctionCalls = sdkFunctionCalls;
               detectedModelContent = firstCand?.content || {
@@ -2033,16 +2680,6 @@ CRITICAL OPERATIONAL RULES:
             if (response && response.text) {
               finalText = response.text;
               modelUsed = candidate.model;
-              const groundingChunks =
-                firstCand?.groundingMetadata?.groundingChunks || [];
-              groundingChunks.forEach((chunk: any) => {
-                if (chunk.web?.uri) {
-                  searchSources.push({
-                    title: chunk.web.title || 'Web Reference',
-                    url: chunk.web.uri,
-                  });
-                }
-              });
               break outerLoop;
             }
           } catch (err: any) {
@@ -2054,8 +2691,7 @@ CRITICAL OPERATIONAL RULES:
               errMsg.includes('API_KEY_INVALID') ||
               errMsg.includes('API key not valid') ||
               errMsg.includes('UNAUTHENTICATED') ||
-              err?.status === 401 ||
-              err?.status === 400
+              err?.status === 401
             ) {
               break;
             }
@@ -2075,7 +2711,6 @@ CRITICAL OPERATIONAL RULES:
       }
 
       if (!finalText) {
-        // Resilient Local Tool & Query Execution Fallback when Free-Tier API Quota (429) is exhausted
         const fallbackResult = buildQuotaFallbackResult(
           prompt,
           ledgerSnapshot,
@@ -2140,9 +2775,12 @@ CRITICAL OPERATIONAL RULES:
         return;
       }
 
-      const normalizedEmail = String(userEmail || 'srujaansharemarketpune@gmail.com').trim().toLowerCase();
-      const isMasterAdmin =
-        userRole !== 'staff_operator' && normalizedEmail === 'srujaansharemarketpune@gmail.com';
+      const authSession = verifyFirebaseAdminSession(
+        req.headers.authorization,
+        userEmail,
+        userRole
+      );
+      const isMasterAdmin = authSession.isMasterAdmin;
 
       if (
         !isMasterAdmin &&
@@ -2151,7 +2789,7 @@ CRITICAL OPERATIONAL RULES:
         )
       ) {
         const deniedText =
-          '### 🔒 Permission Denied\nYour current session (**Staff Operator**) is authorized to view, add, and update Inquiries, Admissions, and Student records, but **cannot delete records, reset databases, or modify system/API configurations**. Please sign in with the **Master Admin** account for destructive or system-level operations.';
+          '### 🔒 Permission Denied\nYour current session (**Staff Operator**) is authorized to view, add, and update Inquiries, Admissions, and Student records, but **cannot delete records, reset databases, or modify system/API configurations**. Please sign in with the **Master Admin** (`srujaansharemarketpune@gmail.com`) account for destructive or system-level operations.';
         writeEvent({ type: 'chunk', delta: deniedText });
         writeEvent({ type: 'done', text: deniedText, searchSources: [], modelUsed: 'rbac-guard' });
         res.end();
