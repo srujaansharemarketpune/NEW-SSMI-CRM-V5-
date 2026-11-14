@@ -1526,14 +1526,16 @@ export async function masterFetchFromCloud(
         ])
       : [[], [], []];
 
-    const cleanSubStudents = filterActiveRecords(remoteStudents as any[], 'students', 'id');
-    const cleanSubLeads = filterActiveRecords(remoteLeads as any[], 'leads', 'id');
-    const cleanSubBatches = filterActiveRecords(remoteBatches as any[], 'batches', 'code');
-    const cleanSubStaff = filterActiveRecords(remoteStaff as any[], 'staff', 'id');
-    const cleanSubCourses = filterActiveRecords(remoteCourses as any[], 'courses', 'id');
+    const canonicalSnapshot = Boolean(masterDoc && Number((masterDoc as any).syncSchemaVersion || 0) >= 2);
+    // Once the canonical full-state snapshot exists, it is authoritative. Older per-collection
+    // mirrors are retained for backwards compatibility but must not resurrect stale records.
+    const cleanSubStudents = canonicalSnapshot ? [] : filterActiveRecords(remoteStudents as any[], 'students', 'id');
+    const cleanSubLeads = canonicalSnapshot ? [] : filterActiveRecords(remoteLeads as any[], 'leads', 'id');
+    const cleanSubBatches = canonicalSnapshot ? [] : filterActiveRecords(remoteBatches as any[], 'batches', 'code');
+    const cleanSubStaff = canonicalSnapshot ? [] : filterActiveRecords(remoteStaff as any[], 'staff', 'id');
+    const cleanSubCourses = canonicalSnapshot ? [] : filterActiveRecords(remoteCourses as any[], 'courses', 'id');
 
     if (masterDoc) {
-      const remotePayload = masterDoc.payload ? masterDoc.payload : masterDoc;
       const remoteTimeStr = String(
         masterDoc.updatedAt ||
           remotePayload.updatedAt ||
@@ -1560,34 +1562,33 @@ export async function masterFetchFromCloud(
 
       // Combine masterDoc + sub-collections using Last-Write-Wins by updatedAt (sub-collections passed second so latest per-doc writes win)
       const cloudMergedStudents = mergeStudentsSafely(masterStudents, cleanSubStudents);
-      const combinedCloudStudents = isLocalSeed
+      const combinedCloudStudents = canonicalSnapshot || isLocalSeed
         ? cloudMergedStudents
         : mergeStudentsSafely(mergedState.students || [], cloudMergedStudents);
 
       const cloudMergedLeads = mergeRecordsByKeySafely(masterLeads, cleanSubLeads, 'id', 'leads');
-      const combinedCloudLeads = isLocalSeed
+      const combinedCloudLeads = canonicalSnapshot || isLocalSeed
         ? cloudMergedLeads
         : mergeRecordsByKeySafely(mergedState.leads || [], cloudMergedLeads, 'id', 'leads');
 
       const cloudMergedBatches = mergeRecordsByKeySafely(masterBatches, cleanSubBatches, 'code', 'batches');
-      const combinedCloudBatches = isLocalSeed
+      const combinedCloudBatches = canonicalSnapshot || isLocalSeed
         ? cloudMergedBatches
         : mergeRecordsByKeySafely(mergedState.batches || [], cloudMergedBatches, 'code', 'batches');
 
       const cloudMergedStaff = mergeRecordsByKeySafely(masterStaff, cleanSubStaff, 'id', 'staff');
-      const combinedCloudStaff = isLocalSeed
+      const combinedCloudStaff = canonicalSnapshot || isLocalSeed
         ? cloudMergedStaff
         : mergeRecordsByKeySafely(mergedState.staff || [], cloudMergedStaff, 'id', 'staff');
 
       const cloudMergedCourses = mergeRecordsByKeySafely(masterCourses, cleanSubCourses, 'id', 'courses');
-      const combinedCloudCourses = isLocalSeed
+      const combinedCloudCourses = canonicalSnapshot || isLocalSeed
         ? cloudMergedCourses
         : mergeRecordsByKeySafely(mergedState.courses || [], cloudMergedCourses, 'id', 'courses');
 
-      const combinedAttendance = mergeAttendanceSafely(
-        mergedState.attendance || {},
-        remotePayload.attendance || {}
-      );
+      const combinedAttendance = canonicalSnapshot
+        ? (remotePayload.attendance || {})
+        : mergeAttendanceSafely(mergedState.attendance || {}, remotePayload.attendance || {});
 
       mergedState = normalizeLoadedState({
         ...mergedState,
@@ -1595,33 +1596,29 @@ export async function masterFetchFromCloud(
         students: combinedCloudStudents,
         leads: combinedCloudLeads,
         batches: combinedCloudBatches,
-        staff: combinedCloudStaff.length > 0 ? combinedCloudStaff : mergedState.staff,
-        courses: combinedCloudCourses.length > 0 ? combinedCloudCourses : mergedState.courses,
+        staff: canonicalSnapshot ? combinedCloudStaff : combinedCloudStaff.length > 0 ? combinedCloudStaff : mergedState.staff,
+        courses: canonicalSnapshot ? combinedCloudCourses : combinedCloudCourses.length > 0 ? combinedCloudCourses : mergedState.courses,
         materials: Array.isArray(remotePayload.materials || remotePayload.studyMaterials)
-          ? mergeRecordsByKeySafely(
-              mergedState.materials || [],
-              remotePayload.materials || remotePayload.studyMaterials,
-              'id'
-            )
+          ? canonicalSnapshot
+            ? (remotePayload.materials || remotePayload.studyMaterials)
+            : mergeRecordsByKeySafely(mergedState.materials || [], remotePayload.materials || remotePayload.studyMaterials, 'id')
           : mergedState.materials,
         lectures: Array.isArray(remotePayload.lectures)
-          ? mergeRecordsByKeySafely(mergedState.lectures || [], remotePayload.lectures, 'id')
+          ? canonicalSnapshot ? remotePayload.lectures : mergeRecordsByKeySafely(mergedState.lectures || [], remotePayload.lectures, 'id')
           : mergedState.lectures,
         attendance: combinedAttendance,
         attendanceHistory: Array.isArray(remotePayload.attendanceHistory)
-          ? mergeRecordsByKeySafely(mergedState.attendanceHistory || [], remotePayload.attendanceHistory, 'id')
+          ? canonicalSnapshot ? remotePayload.attendanceHistory : mergeRecordsByKeySafely(mergedState.attendanceHistory || [], remotePayload.attendanceHistory, 'id')
           : mergedState.attendanceHistory,
         certificates: Array.isArray(remotePayload.certificates)
-          ? mergeRecordsByKeySafely(mergedState.certificates || [], remotePayload.certificates, 'id')
+          ? canonicalSnapshot ? remotePayload.certificates : mergeRecordsByKeySafely(mergedState.certificates || [], remotePayload.certificates, 'id')
           : mergedState.certificates,
         dailyQueue: Array.isArray(remotePayload.dailyQueue)
           ? remotePayload.dailyQueue
           : mergedState.dailyQueue,
-        settings: {
-          ...mergedState.settings,
-          ...(remoteSettings || {}),
-          ...(remotePayload.settings || {})
-        }
+        settings: canonicalSnapshot
+          ? { ...(remotePayload.settings || {}) }
+          : { ...mergedState.settings, ...(remoteSettings || {}), ...(remotePayload.settings || {}) }
       });
       (mergedState as any).updatedAt = remoteTimeStr || timestamp;
       (mergedState as any).isSeedData = false;
