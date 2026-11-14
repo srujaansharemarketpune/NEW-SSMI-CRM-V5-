@@ -3353,71 +3353,19 @@ export async function syncStudentsToFirestore(students: Student[]) {
 }
 
 export async function deleteLeadFromFirestore(leadId: string): Promise<boolean> {
-  markDeletedId('leads', leadId);
-  if (!(await ensureAuthorizedSession())) return false;
-  try {
-    const safeId = toSafeDocId(leadId);
-    const nowIso = new Date().toISOString();
-    const tombstonePayload = {
-      id: safeId,
-      isDeleted: true,
-      deletedAt: nowIso,
-      updatedAt: nowIso,
-      serverUpdatedAt: serverTimestamp(),
-      workspaceId: SHARED_INSTITUTE_ROOT_ID
-    };
-    await Promise.all([
-      withTimeout(setDoc(getInstituteDocRef('leads', safeId), tombstonePayload, { merge: true }), 5000, undefined),
-      withTimeout(setDoc(getInstituteDocRef('inquiries', safeId), tombstonePayload, { merge: true }), 5000, undefined),
-      withTimeout(setDoc(getLegacyDocRef('leads', safeId), tombstonePayload, { merge: true }), 5000, undefined),
-      withTimeout(setDoc(doc(db, 'leads', safeId), tombstonePayload, { merge: true }), 5000, undefined),
-      withTimeout(setDoc(doc(db, 'inquiries', safeId), tombstonePayload, { merge: true }), 5000, undefined)
-    ]);
-    recordCloudWriteSuccess();
-    return true;
-  } catch (e) {
-    console.warn('Firestore lead delete error:', e);
-    return false;
-  }
+  return deleteCanonicalWorkspaceRecord('leads', leadId, 'id');
 }
 
 export async function deleteBatchFromFirestore(batchCode: string): Promise<boolean> {
-  markDeletedId('batches', batchCode);
-  if (!(await ensureAuthorizedSession())) return false;
-  try {
-    await withTimeout(deleteDoc(doc(db, 'batches', toSafeDocId(batchCode))), 8000, undefined);
-    recordCloudWriteSuccess();
-    return true;
-  } catch (e) {
-    console.warn('Firestore batch delete error:', e);
-    return false;
-  }
+  return deleteCanonicalWorkspaceRecord('batches', batchCode, 'code');
 }
 
 export async function deleteStaffFromFirestore(staffId: string): Promise<boolean> {
-  markDeletedId('staff', staffId);
-  if (!(await ensureAuthorizedSession())) return false;
-  try {
-    await withTimeout(deleteDoc(doc(db, 'staff', toSafeDocId(staffId))), 8000, undefined);
-    recordCloudWriteSuccess();
-    return true;
-  } catch (e) {
-    console.warn('Firestore staff delete error:', e);
-    return false;
-  }
+  return deleteCanonicalWorkspaceRecord('staff', staffId, 'id');
 }
 
 export async function deleteCourseFromFirestore(courseId: string): Promise<boolean> {
-  markDeletedId('courses', courseId);
-  if (!(await ensureAuthorizedSession())) return false;
-  try {
-    await withTimeout(deleteDoc(doc(db, 'courses', toSafeDocId(courseId))), 8000, undefined);
-    recordCloudWriteSuccess();
-    return true;
-  } catch (e) {
-    console.warn('Firestore course delete error:', e);
-    return false;
-  }
+  return deleteCanonicalWorkspaceRecord('courses', courseId, 'id');
 }
 
 export async function syncLeadsToFirestore(leads: Lead[]) {
@@ -3883,21 +3831,8 @@ export async function syncFullStateToFirestore(state: AppState, forceReplace = f
   if (!(await ensureAuthorizedSession())) return false;
   setSyncEngineWorking(true);
   try {
-    const [masterOk] = await Promise.all([
-      autoSaveToFirestoreMaster(state, 'institute_master_data', forceReplace),
-      Promise.all([
-        syncStudentsToFirestore(state.students),
-        syncLeadsToFirestore(state.leads),
-        syncBatchesToFirestore(state.batches),
-        syncStaffToFirestore(state.staff),
-        syncCoursesToFirestore(state.courses),
-        syncSettingsToFirestore(state)
-      ]).catch((e) => {
-        console.warn('Collection batch sync notice:', e);
-        return false;
-      })
-    ]);
-    return masterOk;
+    // Single source of truth: one canonical Firestore document, not parallel collections.
+    return await autoSaveToFirestoreMaster(state, 'institute_master_data', forceReplace);
   } finally {
     setSyncEngineWorking(false);
   }
