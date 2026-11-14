@@ -566,7 +566,9 @@ export default function App() {
       const quota = await checkStorageQuota(loaded);
       setStorageQuota(quota);
 
-      setIsLocalStateReady(true);   init();
+      setIsLocalStateReady(true);
+    }
+    init();
 
     // Online / Offline listeners with automatic cloud flush and bidirectional reconciliation on reconnection
     const handleOnline = async () => {
