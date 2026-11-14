@@ -4,6 +4,15 @@ import { Lead, Student, Batch, AppState } from '../types';
    1. GOOGLE FORMS API INTEGRATION
    ========================================================================= */
 
+function extractGoogleFormId(input: string): string {
+  const value = String(input || '').trim();
+  if (!value) throw new Error('Please provide a Google Form URL or ID.');
+  const match = value.match(/\\/forms\\/d\\/(?:e\\/)?([^/?#]+)/i);
+  const id = match?.[1] || value.split(/[/?#]/)[0];
+  if (!id || id.length < 10) throw new Error('The Google Form URL or ID is invalid.');
+  return id;
+}
+
 export interface GoogleFormQuestion {
   questionId: string;
   title: string;
@@ -18,7 +27,7 @@ export interface GoogleFormInfo {
 }
 
 export async function fetchGoogleFormMetadata(formId: string, accessToken: string): Promise<GoogleFormInfo> {
-  const cleanId = formId.replace(/^https:\/\/docs\.google\.com\/forms\/d\//, '').split('/')[0].trim();
+  const cleanId = extractGoogleFormId(formId);
   const res = await fetch(`https://forms.googleapis.com/v1/forms/${cleanId}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -52,7 +61,7 @@ export async function fetchGoogleFormMetadata(formId: string, accessToken: strin
 }
 
 export async function fetchGoogleFormResponses(formId: string, accessToken: string): Promise<any[]> {
-  const cleanId = formId.replace(/^https:\/\/docs\.google\.com\/forms\/d\//, '').split('/')[0].trim();
+  const cleanId = extractGoogleFormId(formId);
   const res = await fetch(`https://forms.googleapis.com/v1/forms/${cleanId}/responses`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
