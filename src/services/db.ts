@@ -1356,106 +1356,46 @@ export async function dualWriteToCloud(
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setPendingOfflineWritesCount(1);
       return {
-        ok: true,
+        ok: false,
         channels,
         timestamp,
         state: stateToPush,
-        message: 'Saved locally (Offline Mode — queued for automatic online sync).'
+        message: 'Saved on this device only. Reconnect to the internet and sign in to sync to the shared Firebase database.'
       };
     }
 
     setSyncEngineWorking(true);
     try {
-      // Run Cloud Server mirror, optional RTDB mirror, and Firebase Firestore sync in parallel so total duration is fast (< 2s)
-      const serverPromise = (async () => {
-        try {
-          const resp = await fetchWithTimeout(
-            '/api/cloud/state',
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ state: stateToPush, instituteDB: unifiedDB, isOverwrite: true })
-            },
-            8000
-          );
-          const contentType = (resp.headers.get('content-type') || '').toLowerCase();
-          if (resp.ok && contentType.includes('application/json')) {
-            channels.push('Cloud Server');
-            recordCloudWriteSuccess();
-          }
-        } catch (err) {
-          console.warn('Online server mirror warning:', err);
+      // One shared storage only: Firebase Firestore canonical workspace document.
+      // Do not report a successful cloud backup unless the canonical Firestore write succeeds.
+      let firestoreError: string | null = null;
+      try {
+        if (!auth.currentUser) {
+          throw new Error('Real Google/Firebase sign-in is required on this device. Local CRM sessions cannot write to Firestore.');
         }
-      })();
-
-      const rtdbPromise = (async () => {
-        const customUrl = stateToPush.settings?.cloudConfig?.firebaseUrl?.trim();
-        if (customUrl && /^https?:\/\//i.test(customUrl)) {
-          try {
-            const base = customUrl.replace(/\/+$/, '').replace(/\/(srujaan_main_store|instituteDB)\.json$/i, '');
-            const tokenParam = stateToPush.settings?.cloudConfig?.authToken
-              ? `?auth=${encodeURIComponent(stateToPush.settings.cloudConfig.authToken)}`
-              : '';
-            const payloadToPut = {
-              ...unifiedDB,
-              updatedAt: timestamp,
-              lastModified: timestamp,
-              payload: stateToPush
-            };
-            const [mainResp] = await Promise.all([
-              fetchWithTimeout(
-                `${base}/srujaan_main_store.json${tokenParam}`,
-                {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(payloadToPut)
-                },
-                8000
-              ),
-              fetchWithTimeout(
-                `${base}/instituteDB.json${tokenParam}`,
-                {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(payloadToPut)
-                },
-                8000
-              ).catch(() => null)
-            ]);
-            if (mainResp && mainResp.ok) {
-              channels.push('Firebase RTDB');
-            }
-          } catch (err) {
-            console.warn('Custom Firebase REST sync warning:', err);
-          }
+        const synced = await syncFullStateToFirestore(stateToPush, isOverwrite);
+        if (!synced) {
+          throw new Error('The canonical Firestore write failed. Check Firebase Auth and Firestore security rules.');
         }
-      })();
-
-      const firestorePromise = (async () => {
-        try {
-          if (options?.interactiveAuth && !auth.currentUser) {
-            await signInWithGoogle();
-          }
-          const synced = await syncFullStateToFirestore(stateToPush, isOverwrite);
-          if (synced) {
-            channels.push('Firebase Firestore');
-          }
-        } catch (err) {
-          console.warn('Firebase Firestore sync notice:', err);
-        }
-      })();
-
-      await Promise.all([serverPromise, rtdbPromise, firestorePromise]);
+        channels.push('Firebase Firestore');
+      } catch (err: any) {
+        firestoreError = err?.message || String(err);
+        console.error('[SSMI canonical cloud sync failed]', firestoreError);
+        recordSyncError(firestoreError, err);
+      }
     } finally {
       setSyncEngineWorking(false);
     }
 
+    const cloudSynced = channels.includes('Firebase Firestore');
     return {
-      ok: true,
+      ok: cloudSynced,
       channels,
       timestamp,
       state: stateToPush,
-      message: `${isOverwrite ? 'Force-overwrote' : 'Pushed synchronized state to'}: ${channels.join(' + ')}`
+      message: cloudSynced
+        ? `${isOverwrite ? 'Overwrote canonical shared Firebase workspace' : 'Synchronized canonical shared Firebase workspace'}.`
+        : `NOT synced to shared cloud storage. ${firestoreError || 'Sign in with the authorized Google account and retry.'}`
     };
   };
 
@@ -1681,44 +1621,7 @@ export async function masterFetchFromCloud(
   // Firestore canonical workspace is the sole source of truth.
   // A separately configured RTDB mirror is write-only and must never override Firestore data.
 
-  // 3. Check Online Cloud Run Server (/api/cloud/state) as fallback if Firestore was unreachable
-  if (!authoritativeCloudApplied) {
-    try {
-      const resp = await fetchWithTimeout('/api/cloud/state', {}, 10000);
-      const contentType = (resp.headers.get('content-type') || '').toLowerCase();
-      if (resp.ok && contentType.includes('application/json')) {
-        const data = await resp.json();
-        if (data?.state && Array.isArray(data.state.students)) {
-          const remoteState = data.state as AppState;
-          const cleanStudents = filterActiveRecords(remoteState.students, 'students', 'id');
-          const cleanLeads = filterActiveRecords(remoteState.leads || [], 'leads', 'id');
-          const cleanStaff = filterActiveRecords(remoteState.staff || [], 'staff', 'id');
-          const cleanCourses = filterActiveRecords(remoteState.courses || [], 'courses', 'id');
-          const cleanBatches = filterActiveRecords(remoteState.batches || [], 'batches', 'code');
-
-          mergedState = normalizeLoadedState({
-            ...mergedState,
-            ...remoteState,
-            students: isLocalSeed ? cleanStudents : mergeStudentsSafely(mergedState.students || [], cleanStudents),
-            leads: isLocalSeed ? cleanLeads : mergeRecordsByKeySafely(mergedState.leads || [], cleanLeads, 'id', 'leads'),
-            staff: cleanStaff.length > 0 ? cleanStaff : mergedState.staff,
-            courses: cleanCourses.length > 0 ? cleanCourses : mergedState.courses,
-            batches: cleanBatches,
-            settings: {
-              ...mergedState.settings,
-              ...(remoteState.settings || {})
-            }
-          });
-          (mergedState as any).isSeedData = false;
-          sourcesUsed.push('Cloud Server');
-          updated = true;
-          recordCloudReadSuccess();
-        }
-      }
-    } catch (err) {
-      console.warn('Error fetching from online server mirror:', err);
-    }
-  }
+  // Firestore is the only authoritative database. Never hydrate from a per-deployment server mirror.
 
   mergedState = normalizeLoadedState(mergedState);
   mergedState.lastCloudSyncAt = new Date().toLocaleString('en-IN', { hour12: false });
