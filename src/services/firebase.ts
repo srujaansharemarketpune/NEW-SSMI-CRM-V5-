@@ -216,37 +216,6 @@ export function loadCrmUserSession(): CrmUserSession | null {
   }
 }
 
-export function restoreDefaultMasterAdminSession(): CrmUserSession {
-  const session: CrmUserSession = {
-    ...DEFAULT_MASTER_ADMIN_SESSION,
-    updatedAt: new Date().toISOString()
-  };
-  if (typeof window !== 'undefined') {
-    try {
-      sessionStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
-      sessionStorage.removeItem(SESSION_START_TIME_KEY);
-      sessionStorage.removeItem(SESSION_USER_EMAIL_KEY);
-      saveCrmUserSession(session);
-      const adminPayload: PersistedAdminSession = {
-        uid: session.uid || 'srujaan_master_admin_root',
-        email: PRIMARY_ADMIN_EMAIL,
-        displayName: 'Prasad Sir',
-        photoURL: '',
-        persistedAt: session.updatedAt || new Date().toISOString()
-      };
-      sessionStorage.setItem(PERSISTED_AUTH_SESSION_KEY, JSON.stringify(adminPayload));
-    } catch {
-      // ignore storage errors
-    }
-  }
-  diagLastSyncError = null;
-  diagErrorCategory = null;
-  if (typeof navigator === 'undefined' || navigator.onLine) {
-    diagSyncState = 'Connected';
-  }
-  notifySyncStatusListeners();
-  return session;
-}
 
 export function savePersistedAdminSession(user: User | null, resetSecondaryTimer = false) {
   if (typeof window === 'undefined' || !user || !user.email) return;
