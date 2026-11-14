@@ -1541,6 +1541,7 @@ export async function masterFetchFromCloud(
     const cleanSubCourses = canonicalSnapshot ? [] : filterActiveRecords(remoteCourses as any[], 'courses', 'id');
 
     if (masterDoc) {
+      const remotePayload = masterDoc.payload ? masterDoc.payload : masterDoc;
       const remoteTimeStr = String(
         masterDoc.updatedAt ||
           remotePayload.updatedAt ||
