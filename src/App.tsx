@@ -70,7 +70,7 @@ import {
   subscribeToAuth,
   logoutAdmin,
   checkRedirectResult,
-  ensureBrowserLocalPersistence,
+  ensureBrowserSessionPersistence,
   getInitialAuthSession,
   loginWithDefaultMasterAdmin
 } from './services/authService';
@@ -155,7 +155,7 @@ export default function App() {
   const stateRef = useRef<AppState>(state);
   stateRef.current = state;
 
-  // Pre-logged-in Master Admin Session (`srujaansharemarketpune@gmail.com`) & Two-Email RBAC State
+  // Tab-scoped Auth Session (`browserSessionPersistence` + `sessionStorage`) & Two-Email RBAC State
   const initialAuthRef = useRef<ReturnType<typeof getInitialAuthSession> | undefined>(undefined);
   if (initialAuthRef.current === undefined) {
     initialAuthRef.current = getInitialAuthSession();
@@ -165,14 +165,14 @@ export default function App() {
   const [authInitializing, setAuthInitializing] = useState<boolean>(false);
   const [redirectAuthError, setRedirectAuthError] = useState<FormattedFirebaseAuthError | null>(null);
   const authEmailRef = useRef<string | null>(
-    initialAuthRef.current?.user?.email?.toLowerCase().trim() || PRIMARY_ADMIN_EMAIL
+    initialAuthRef.current?.user?.email?.toLowerCase().trim() || null
   );
 
-  // Top-level mount effect: ensure browserLocalPersistence & handle getRedirectResult(auth) safely without blocking startup
+  // Top-level mount effect: ensure browserSessionPersistence & handle getRedirectResult(auth) safely
   useEffect(() => {
     let mounted = true;
     try {
-      void ensureBrowserLocalPersistence();
+      void ensureBrowserSessionPersistence();
     } catch {
       // ignore startup persistence notice
     }

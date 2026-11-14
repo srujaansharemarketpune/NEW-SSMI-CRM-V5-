@@ -4,7 +4,6 @@ import {
   onAuthStateChanged,
   signOut,
   setPersistence,
-  browserLocalPersistence,
   browserSessionPersistence,
   GoogleAuthProvider,
   signInWithPopup
@@ -149,6 +148,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     }
                   }
                 } else {
+                  clearPersistedAdminSession(false);
                   setUser(null);
                   clearSessionTimer();
                 }
@@ -157,21 +157,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } catch (cbErr) {
             console.warn('[AuthContext] Auth callback notice:', cbErr);
             const fallback = getInitialAuthSession();
-            if (fallback) setUser(fallback.user);
+            setUser(fallback ? fallback.user : null);
           }
           setLoading(false);
         },
         (authErr) => {
-          console.warn('[AuthContext] Auth listener notice (falling back to default Master Admin session):', authErr);
+          console.warn('[AuthContext] Auth listener notice:', authErr);
           const fallback = getInitialAuthSession();
-          if (fallback) setUser(fallback.user);
+          setUser(fallback ? fallback.user : null);
           setLoading(false);
         }
       );
     } catch (initErr) {
       console.warn('[AuthContext] Auth init notice:', initErr);
       const fallback = getInitialAuthSession();
-      if (fallback) setUser(fallback.user);
+      setUser(fallback ? fallback.user : null);
       setLoading(false);
     }
 

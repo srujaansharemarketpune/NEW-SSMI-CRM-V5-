@@ -3,7 +3,7 @@ import { Logo } from './Logo';
 import {
   loginWithGoogle,
   checkRedirectResult,
-  ensureBrowserLocalPersistence,
+  ensureBrowserSessionPersistence,
   AuthSessionResult
 } from '../services/authService';
 import {
@@ -33,11 +33,11 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, initialAuthError =
     }
   }, [initialAuthError]);
 
-  // Configure browserLocalPersistence eagerly & handle any redirect result on mount safely
+  // Configure browserSessionPersistence eagerly & handle any redirect result on mount safely
   useEffect(() => {
     let mounted = true;
     try {
-      void ensureBrowserLocalPersistence();
+      void ensureBrowserSessionPersistence();
     } catch {
       // ignore startup persistence notice
     }

@@ -6,7 +6,7 @@ import {
   signOut,
   onAuthStateChanged,
   setPersistence,
-  browserLocalPersistence,
+  browserSessionPersistence,
   User
 } from 'firebase/auth';
 import {
@@ -63,12 +63,13 @@ googleProvider.setCustomParameters({
 });
 
 /**
- * Explicitly configures browserLocalPersistence at startup/mount so no async delay precedes signInWithPopup.
+ * Explicitly configures browserSessionPersistence at startup/mount (tab-scoped) so no async delay precedes signInWithPopup.
+ * Same-tab reloads stay logged in, while new tabs/windows/devices always require a fresh login.
  */
-export function ensureBrowserLocalPersistence(): Promise<void> {
+export function ensureBrowserSessionPersistence(): Promise<void> {
   try {
-    return setPersistence(auth, browserLocalPersistence).catch((err) => {
-      console.warn('[AuthService] Could not set browserLocalPersistence:', err);
+    return setPersistence(auth, browserSessionPersistence).catch((err) => {
+      console.warn('[AuthService] Could not set browserSessionPersistence:', err);
     });
   } catch (err) {
     console.warn('[AuthService] Sync persistence setup fallback:', err);
@@ -76,8 +77,10 @@ export function ensureBrowserLocalPersistence(): Promise<void> {
   }
 }
 
+export const ensureBrowserLocalPersistence = ensureBrowserSessionPersistence;
+
 if (typeof window !== 'undefined') {
-  void ensureBrowserLocalPersistence();
+  void ensureBrowserSessionPersistence();
 }
 
 export interface AuthSessionResult {
@@ -281,16 +284,14 @@ export const logoutUser = logoutAdmin;
 export const logoutOperator = logoutAdmin;
 
 /**
- * Single source of truth for auth state with automatic default Master Admin connection (`srujaansharemarketpune@gmail.com`)
+ * Single source of truth for tab-scoped auth state (requires fresh Google Sign-In on every new tab/visit/device)
  */
 export function subscribeToAuth(
   onAuthChange: (authData: AuthSessionResult | null) => void
 ): () => void {
-  // Immediately hydrate from persisted or default Master Admin session so the app boots with 0ms delay
+  // Immediately hydrate ONLY if already signed in within the current tab's sessionStorage
   const initialSession = getInitialAuthSession();
-  if (initialSession) {
-    onAuthChange(initialSession);
-  }
+  onAuthChange(initialSession);
 
   try {
     return onAuthStateChanged(
@@ -320,25 +321,18 @@ export function subscribeToAuth(
           console.warn('[AuthService] onAuthStateChanged callback fallback:', cbErr);
         }
 
-        // If no live Firebase popup session is active, keep ssmi_crm_user_session active (unless explicitly signed out)
-        const fallbackSession = getInitialAuthSession();
-        if (fallbackSession) {
-          onAuthChange(fallbackSession);
-          return;
-        }
-
+        // No live Firebase session in this tab's browserSessionPersistence — clear any stale tab storage and require Login
+        clearPersistedAdminSession(false);
         onAuthChange(null);
       },
       (authErr) => {
-        console.warn('[AuthService] onAuthStateChanged listener warning (using default Master Admin cache):', authErr);
+        console.warn('[AuthService] onAuthStateChanged listener warning:', authErr);
         const fallbackSession = getInitialAuthSession();
-        if (fallbackSession) {
-          onAuthChange(fallbackSession);
-        }
+        onAuthChange(fallbackSession);
       }
     );
   } catch (err) {
-    console.warn('[AuthService] Failed to attach auth listener, falling back to ssmi_crm_user_session:', err);
+    console.warn('[AuthService] Failed to attach auth listener:', err);
     return () => {};
   }
 }

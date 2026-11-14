@@ -121,7 +121,7 @@ export function evaluateSessionExpiry(email?: string | null): {
   const normalized = email.trim().toLowerCase();
 
   if (isPrimaryAdminEmail(normalized)) {
-    // Master Admin remains logged in indefinitely in localStorage until manual logout
+    // Master Admin remains logged in for the active browser tab session until tab close or manual logout
     return { valid: true, expired: false, remainingMs: null };
   }
 
@@ -130,7 +130,7 @@ export function evaluateSessionExpiry(email?: string | null): {
       return { valid: true, expired: false, remainingMs: SESSION_LIMIT_MS };
     }
     const now = Date.now();
-    const rawStart = localStorage.getItem(SESSION_START_TIME_KEY);
+    const rawStart = sessionStorage.getItem(SESSION_START_TIME_KEY);
     const sessionStart = parseInt(rawStart || '0', 10);
 
     if (!sessionStart || now - sessionStart >= SESSION_LIMIT_MS) {
@@ -147,8 +147,8 @@ export function evaluateSessionExpiry(email?: string | null): {
 export function saveCrmUserSession(session: CrmUserSession) {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
-    localStorage.setItem(
+    sessionStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
+    sessionStorage.setItem(
       SSMI_CRM_USER_SESSION_KEY,
       JSON.stringify({
         email: session.email,
@@ -168,14 +168,14 @@ export function saveCrmUserSession(session: CrmUserSession) {
 
 export function loadCrmUserSession(): CrmUserSession | null {
   if (typeof window === 'undefined') {
-    return { ...DEFAULT_MASTER_ADMIN_SESSION };
+    return null;
   }
   try {
-    if (localStorage.getItem(EXPLICIT_SIGNOUT_KEY) === 'true') {
+    if (sessionStorage.getItem(EXPLICIT_SIGNOUT_KEY) === 'true') {
       return null;
     }
 
-    const raw = localStorage.getItem(SSMI_CRM_USER_SESSION_KEY);
+    const raw = sessionStorage.getItem(SSMI_CRM_USER_SESSION_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<CrmUserSession>;
       const email = String(parsed?.email || '').trim().toLowerCase();
@@ -210,15 +210,9 @@ export function loadCrmUserSession(): CrmUserSession | null {
       }
     }
 
-    // Auto-seed default pre-logged-in Master Admin session so startup opens directly into CRM
-    const seeded: CrmUserSession = {
-      ...DEFAULT_MASTER_ADMIN_SESSION,
-      updatedAt: new Date().toISOString()
-    };
-    saveCrmUserSession(seeded);
-    return seeded;
+    return null;
   } catch {
-    return { ...DEFAULT_MASTER_ADMIN_SESSION };
+    return null;
   }
 }
 
@@ -229,9 +223,9 @@ export function restoreDefaultMasterAdminSession(): CrmUserSession {
   };
   if (typeof window !== 'undefined') {
     try {
-      localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
-      localStorage.removeItem(SESSION_START_TIME_KEY);
-      localStorage.removeItem(SESSION_USER_EMAIL_KEY);
+      sessionStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
+      sessionStorage.removeItem(SESSION_START_TIME_KEY);
+      sessionStorage.removeItem(SESSION_USER_EMAIL_KEY);
       saveCrmUserSession(session);
       const adminPayload: PersistedAdminSession = {
         uid: session.uid || 'srujaan_master_admin_root',
@@ -240,7 +234,7 @@ export function restoreDefaultMasterAdminSession(): CrmUserSession {
         photoURL: '',
         persistedAt: session.updatedAt || new Date().toISOString()
       };
-      localStorage.setItem(PERSISTED_AUTH_SESSION_KEY, JSON.stringify(adminPayload));
+      sessionStorage.setItem(PERSISTED_AUTH_SESSION_KEY, JSON.stringify(adminPayload));
     } catch {
       // ignore storage errors
     }
@@ -260,11 +254,11 @@ export function savePersistedAdminSession(user: User | null, resetSecondaryTimer
     const normalized = user.email.trim().toLowerCase();
     if (!ALLOWED_EMAILS.includes(normalized)) return;
 
-    localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
+    sessionStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
 
     if (isPrimaryAdminEmail(normalized)) {
-      localStorage.removeItem(SESSION_START_TIME_KEY);
-      localStorage.removeItem(SESSION_USER_EMAIL_KEY);
+      sessionStorage.removeItem(SESSION_START_TIME_KEY);
+      sessionStorage.removeItem(SESSION_USER_EMAIL_KEY);
       const payload: PersistedAdminSession = {
         uid: user.uid,
         email: PRIMARY_ADMIN_EMAIL,
@@ -272,7 +266,7 @@ export function savePersistedAdminSession(user: User | null, resetSecondaryTimer
         photoURL: user.photoURL || '',
         persistedAt: new Date().toISOString()
       };
-      localStorage.setItem(PERSISTED_AUTH_SESSION_KEY, JSON.stringify(payload));
+      sessionStorage.setItem(PERSISTED_AUTH_SESSION_KEY, JSON.stringify(payload));
       saveCrmUserSession({
         email: PRIMARY_ADMIN_EMAIL,
         name: user.displayName && !user.displayName.includes('@') ? 'Prasad Sir' : 'Prasad Sir',
@@ -284,15 +278,15 @@ export function savePersistedAdminSession(user: User | null, resetSecondaryTimer
         updatedAt: payload.persistedAt
       });
     } else if (normalized === SECONDARY_USER_EMAIL) {
-      const existingStart = parseInt(localStorage.getItem(SESSION_START_TIME_KEY) || '0', 10);
+      const existingStart = parseInt(sessionStorage.getItem(SESSION_START_TIME_KEY) || '0', 10);
       const now = Date.now();
       const startTime =
         resetSecondaryTimer || !existingStart || now - existingStart >= SESSION_LIMIT_MS
           ? now
           : existingStart;
 
-      localStorage.setItem(SESSION_START_TIME_KEY, startTime.toString());
-      localStorage.setItem(SESSION_USER_EMAIL_KEY, normalized);
+      sessionStorage.setItem(SESSION_START_TIME_KEY, startTime.toString());
+      sessionStorage.setItem(SESSION_USER_EMAIL_KEY, normalized);
 
       const payload: PersistedAdminSession = {
         uid: user.uid,
@@ -303,7 +297,6 @@ export function savePersistedAdminSession(user: User | null, resetSecondaryTimer
         sessionStartTime: startTime
       };
       sessionStorage.setItem(PERSISTED_AUTH_SESSION_KEY, JSON.stringify(payload));
-      localStorage.setItem(PERSISTED_AUTH_SESSION_KEY, JSON.stringify(payload));
       saveCrmUserSession({
         email: SECONDARY_USER_EMAIL,
         name: user.displayName || 'Uday Hajare',
@@ -316,14 +309,14 @@ export function savePersistedAdminSession(user: User | null, resetSecondaryTimer
       });
     }
   } catch (err) {
-    console.warn('Could not persist session to storage:', err);
+    console.warn('Could not persist session to sessionStorage:', err);
   }
 }
 
 export function loadPersistedAdminSession(): PersistedAdminSession | null {
   if (typeof window === 'undefined') return null;
   try {
-    if (localStorage.getItem(EXPLICIT_SIGNOUT_KEY) === 'true') {
+    if (sessionStorage.getItem(EXPLICIT_SIGNOUT_KEY) === 'true') {
       return null;
     }
 
@@ -355,9 +348,9 @@ export function loadPersistedAdminSession(): PersistedAdminSession | null {
       }
     }
 
-    const rawLocal = localStorage.getItem(PERSISTED_AUTH_SESSION_KEY);
-    if (rawLocal) {
-      const parsed = JSON.parse(rawLocal) as PersistedAdminSession;
+    const rawSession = sessionStorage.getItem(PERSISTED_AUTH_SESSION_KEY);
+    if (rawSession) {
+      const parsed = JSON.parse(rawSession) as PersistedAdminSession;
       const email = (parsed?.email || '').trim().toLowerCase();
       if (isPrimaryAdminEmail(email)) {
         return parsed;
@@ -368,39 +361,12 @@ export function loadPersistedAdminSession(): PersistedAdminSession | null {
           return parsed;
         }
         clearPersistedAdminSession();
-        return null;
       }
     }
 
-    const rawSession = sessionStorage.getItem(PERSISTED_AUTH_SESSION_KEY);
-    if (rawSession) {
-      const parsed = JSON.parse(rawSession) as PersistedAdminSession;
-      const email = (parsed?.email || '').trim().toLowerCase();
-      if (email === SECONDARY_USER_EMAIL) {
-        const check = evaluateSessionExpiry(email);
-        if (check.valid) {
-          return parsed;
-        }
-        clearPersistedAdminSession();
-      }
-    }
-
-    // Default to Master Admin session so the app runs smoothly with zero sign-in barrier
-    return {
-      uid: 'srujaan_master_admin_root',
-      email: PRIMARY_ADMIN_EMAIL,
-      displayName: 'Prasad Sir',
-      photoURL: '',
-      persistedAt: new Date().toISOString()
-    };
+    return null;
   } catch {
-    return {
-      uid: 'srujaan_master_admin_root',
-      email: PRIMARY_ADMIN_EMAIL,
-      displayName: 'Prasad Sir',
-      photoURL: '',
-      persistedAt: new Date().toISOString()
-    };
+    return null;
   }
 }
 
@@ -411,9 +377,15 @@ export function clearPersistedAdminSession(markExplicitSignOut = false) {
     localStorage.removeItem(SSMI_CRM_USER_SESSION_KEY);
     localStorage.removeItem(SESSION_START_TIME_KEY);
     localStorage.removeItem(SESSION_USER_EMAIL_KEY);
+    localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
     sessionStorage.removeItem(PERSISTED_AUTH_SESSION_KEY);
+    sessionStorage.removeItem(SSMI_CRM_USER_SESSION_KEY);
+    sessionStorage.removeItem(SESSION_START_TIME_KEY);
+    sessionStorage.removeItem(SESSION_USER_EMAIL_KEY);
     if (markExplicitSignOut) {
-      localStorage.setItem(EXPLICIT_SIGNOUT_KEY, 'true');
+      sessionStorage.setItem(EXPLICIT_SIGNOUT_KEY, 'true');
+    } else {
+      sessionStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
     }
   } catch (err) {
     console.warn('Could not clear persisted admin session:', err);
@@ -590,15 +562,23 @@ export const app = (() => {
 })();
 export { deleteApp };
 
+// Purge any legacy localStorage auth session keys so new tabs/visits always start at the Login gate
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem(PERSISTED_AUTH_SESSION_KEY);
+    localStorage.removeItem(SSMI_CRM_USER_SESSION_KEY);
+    localStorage.removeItem(SESSION_START_TIME_KEY);
+    localStorage.removeItem(SESSION_USER_EMAIL_KEY);
+    localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
+  } catch {
+    // ignore storage access issues
+  }
+}
+
 export const auth = (() => {
   try {
     return initializeAuth(app, {
-      persistence: [
-        browserLocalPersistence,
-        indexedDBLocalPersistence,
-        browserSessionPersistence,
-        inMemoryPersistence
-      ],
+      persistence: [browserSessionPersistence, inMemoryPersistence],
       popupRedirectResolver: browserPopupRedirectResolver
     });
   } catch {
@@ -606,10 +586,11 @@ export const auth = (() => {
   }
 })();
 
-// Explicitly ensure browserLocalPersistence on initialization so no async await delays signInWithPopup
+// Explicitly ensure browserSessionPersistence (tab-scoped) so page reloads in the same tab stay logged in,
+// while every new tab, new window, or new device requires a fresh Google Sign-In.
 if (typeof window !== 'undefined') {
   try {
-    setPersistence(auth, browserLocalPersistence).catch(() => {});
+    setPersistence(auth, browserSessionPersistence).catch(() => {});
   } catch {
     // ignore persistence setup warning
   }
