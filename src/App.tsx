@@ -628,7 +628,7 @@ export default function App() {
     return () => {
       unsubscribe();
     };
-  }, [state.settings?.cloudConfig?.firebaseUrl, currentUser?.uid]);
+  }, [currentUser?.uid]);
 
   // Cloud-First Initialization on Mount:
   // 1. Do NOT rely solely on local storage.
@@ -4266,7 +4266,7 @@ export default function App() {
     showToast('✓ Reset to consolidated factory dataset!');
   };
 
-  // Master Save / Push Update / Overwrite Cloud (Dual-Write Local + Cloud Server + Firebase Firestore + Custom RTDB)
+  // Master Save / Push Update / Overwrite Cloud (one canonical shared Firebase Firestore workspace)
   const handleMasterSaveToCloud = async (interactiveAuth = false, isOverwrite = false, timeoutMs = 20000) => {
     setIsCloudSyncing(true);
     const emergencyResetTimer = setTimeout(() => {
@@ -4295,6 +4295,13 @@ export default function App() {
       }
 
       const result = raceResult;
+      if (!result.ok) {
+        hasUnsyncedLocalChangesRef.current = true;
+        recordSyncError(result.message || 'Shared Firebase sync failed.');
+        showToast(`⚠️ NOT synced to shared cloud: ${(result.message || 'Firebase write failed.').slice(0, 120)}`);
+        return;
+      }
+
       const nowIso = new Date().toISOString();
       const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
       setLastCloudSyncAt(nowStr);
@@ -4319,7 +4326,7 @@ export default function App() {
         },
         syncQueue: prev.syncQueue.map(q => ({
           ...q,
-          status: isOverwrite ? 'Force-Overwrote Cloud' : 'Synced to Cloud & Firebase'
+          status: isOverwrite ? 'Force-Overwrote Cloud' : 'Synced to Shared Firebase'
         }))
       }));
 
@@ -4331,8 +4338,8 @@ export default function App() {
       );
       showToast(
         isOverwrite
-          ? `⚡ Cloud Overwritten (${result.channels.join(' + ')})!`
-          : `⬆️ Push Update Complete (${result.channels.join(' + ')})!`
+          ? `⚡ Shared Firebase workspace overwritten (${result.channels.join(' + ')})!`
+          : `⬆️ Shared Firebase sync complete (${result.channels.join(' + ')})!`
       );
     } catch (err: any) {
       console.warn('Cloud push warning:', err);
@@ -5080,7 +5087,7 @@ export default function App() {
                 Students: {state.students.length} • Leads: {state.leads.length} • Batches: {state.batches.length} • Staff: {state.staff.length}
               </p>
               <p className="text-[11px] text-amber-800 leading-relaxed">
-                This force-pushes your current local database across Firebase Cloud Firestore, Cloud Server, and any configured Firebase RTDB endpoint.
+                This replaces the single shared Firebase Firestore workspace for every device. Only use it when this device contains the complete, correct database.
               </p>
             </div>
 
