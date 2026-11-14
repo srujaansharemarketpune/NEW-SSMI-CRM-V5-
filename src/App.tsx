@@ -169,6 +169,7 @@ export default function App() {
   useEffect(() => {
     const onCanonicalSyncSuccess = () => {
       isSharedWorkspaceHydratedRef.current = true;
+      setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
     };
     window.addEventListener('ssm-canonical-sync-success', onCanonicalSyncSuccess);
     return () => window.removeEventListener('ssm-canonical-sync-success', onCanonicalSyncSuccess);
@@ -772,15 +773,12 @@ export default function App() {
     // Non-blocking debounced auto-save (LocalStorage + IndexedDB + Firestore)
     autoSaveData(next, 'institute_master_data');
 
-    // Schedule non-blocking quota check & cloud mirror update (debounced 600ms)
+    // Schedule a non-blocking storage quota check (cloud status updates only after Firestore confirms).
     if (cloudDebounceRef.current) {
       window.clearTimeout(cloudDebounceRef.current);
     }
     cloudDebounceRef.current = window.setTimeout(() => {
       checkStorageQuota(stateRef.current).then(setStorageQuota);
-      if (typeof navigator === 'undefined' || navigator.onLine) {
-        setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
-      }
     }, 600);
   };
 
