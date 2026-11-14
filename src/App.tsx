@@ -4290,6 +4290,12 @@ export default function App() {
       }
 
       const result = raceResult;
+      const hasFirestoreSource = String(result.source || '').includes('Firestore');
+      if (!hasFirestoreSource) {
+        recordSyncError('No shared Firestore snapshot was read. Local records remain on this device.');
+        if (!silentOnLogin) showToast('⚠️ No shared Firebase data was confirmed. Local records were preserved.');
+        return;
+      }
       if (result.state) {
         isSharedWorkspaceHydratedRef.current = true;
         const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
