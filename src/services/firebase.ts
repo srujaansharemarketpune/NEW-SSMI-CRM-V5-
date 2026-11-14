@@ -3567,7 +3567,7 @@ export async function fetchMasterSnapshotFromFirestore(
       const candidates = [snap, legacySnap, masterSnap].filter((item) => item && item.exists());
       candidates.sort((left, right) => parseRecordTimestampMs(right.data()) - parseRecordTimestampMs(left.data()));
       snap = candidates[0] || null;
-      if (snap && snap.ref.path !== primaryRef.path) {
+      if (snap && (!canonicalReady || snap.ref.path !== primaryRef.path)) {
         const promoted = {
           ...snap.data(),
           workspaceId: SHARED_INSTITUTE_ROOT_ID,
