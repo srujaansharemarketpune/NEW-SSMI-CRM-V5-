@@ -34,8 +34,7 @@ import {
   masterFetchFromCloud,
   syncWindowInstituteDB,
   getActiveInstituteAddress,
-  saveLocalSnapshotToStorage,
-  setupFirebaseSseListener
+  saveLocalSnapshotToStorage
 } from './services/db';
 import {
   saveCachedStudents,
@@ -627,27 +626,9 @@ export default function App() {
       }
     })();
 
-    // Real-Time SSE Listener for custom Firebase Realtime Database URL (if configured)
-    const unsubscribeSse = setupFirebaseSseListener(
-      stateRef.current.settings?.cloudConfig?.firebaseUrl,
-      stateRef.current.settings?.cloudConfig?.authToken,
-      (remotePayload) => {
-        if (Date.now() - lastLocalMutationAtRef.current < 4000) return;
-        const activeTag = document.activeElement?.tagName;
-        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return;
-        const normalized = normalizeLoadedState({
-          ...stateRef.current,
-          ...remotePayload
-        });
-        setState(normalized);
-        stateRef.current = normalized;
-        saveStateToStorage(normalized, { preserveTimestamp: true });
-      }
-    );
 
     return () => {
       unsubscribe();
-      unsubscribeSse();
     };
   }, [state.settings?.cloudConfig?.firebaseUrl, currentUser?.uid]);
 
