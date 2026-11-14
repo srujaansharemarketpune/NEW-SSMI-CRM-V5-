@@ -3573,7 +3573,8 @@ function compactMaterialsForMasterDoc(materials: any[]): any[] {
  */
 export async function autoSaveToFirestoreMaster(
   updatedData: AppState | any,
-  userId = 'institute_master_data'
+  userId = 'institute_master_data',
+  forceReplace = false
 ): Promise<boolean> {
   if (!(await ensureAuthorizedSession())) return false;
   try {
@@ -3614,62 +3615,75 @@ export async function autoSaveToFirestoreMaster(
     // One canonical document is the source of truth for every device.
     // Merge record-level changes transactionally so stale devices cannot overwrite newer cloud data.
     const sharedWorkspaceRef = doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID);
-    await executeWithBackoff(
-      () => runTransaction(db, async (transaction) => {
-        const currentSnap = await transaction.get(sharedWorkspaceRef);
-        const remote = currentSnap.exists() ? currentSnap.data() : {};
-        if (remote.deletedRecords) mergeRemoteDeletedRegistry(remote.deletedRecords);
-
-        const students = mergeStudentsSafely(
-          Array.isArray(remote.students) ? remote.students : [],
-          studentsList
-        );
-        const leads = mergeRecordsByKeySafely(
-          Array.isArray(remote.leads) ? remote.leads : [],
-          Array.isArray(updatedData.leads) ? updatedData.leads : [],
-          'id',
-          'leads'
-        );
-        const batches = mergeRecordsByKeySafely(
-          Array.isArray(remote.batches) ? remote.batches : [],
-          Array.isArray(updatedData.batches) ? updatedData.batches : [],
-          'code',
-          'batches'
-        );
-        const courses = mergeRecordsByKeySafely(
-          Array.isArray(remote.courses) ? remote.courses : [],
-          Array.isArray(updatedData.courses) ? updatedData.courses : [],
-          'id',
-          'courses'
-        );
-        const staff = mergeRecordsByKeySafely(
-          Array.isArray(remote.staff) ? remote.staff : [],
-          Array.isArray(updatedData.staff) ? updatedData.staff : [],
-          'id',
-          'staff'
-        );
-        const deleted = readDeletedRegistry();
-        const finalPayload = sanitizeForFirestore({
-          ...remote,
+    if (forceReplace) {
+      // Explicit "Overwrite Cloud" is the only path allowed to replace the full canonical snapshot.
+      await executeWithBackoff(
+        () => setDoc(sharedWorkspaceRef, {
           ...masterPayload,
-          students: students.filter((item: any) => !deleted.students.includes(String(item.id))),
-          leads: leads.filter((item: any) => !deleted.leads.includes(String(item.id))),
-          batches: batches.filter((item: any) => !deleted.batches.includes(String(item.code || item.id))),
-          courses: courses.filter((item: any) => !deleted.courses.includes(String(item.id))),
-          staff: staff.filter((item: any) => !deleted.staff.includes(String(item.id))),
-          attendance: mergeAttendanceSafely(remote.attendance || {}, updatedData.attendance || {}),
-          settings: { ...(remote.settings || {}), ...(masterPayload.settings || {}) },
-          deletedRecords: deleted,
-          updatedAt: nowIso,
-          revision: Number(remote.revision || 0) + 1,
+          workspaceId: SHARED_INSTITUTE_ROOT_ID,
           syncSchemaVersion: 2,
-          serverUpdatedAt: serverTimestamp(),
-          workspaceId: SHARED_INSTITUTE_ROOT_ID
-        });
-        transaction.set(sharedWorkspaceRef, finalPayload, { merge: false });
-      }),
-      { maxAttempts: 5, baseDelayMs: 500, timeoutMs: 15000, label: 'Transactional canonical master sync' }
-    );
+          revision: Date.now()
+        }, { merge: false }),
+        { maxAttempts: 3, baseDelayMs: 600, timeoutMs: 15000, label: 'Explicit canonical master overwrite' }
+      );
+    } else {
+      await executeWithBackoff(
+        () => runTransaction(db, async (transaction) => {
+          const currentSnap = await transaction.get(sharedWorkspaceRef);
+          const remote = currentSnap.exists() ? currentSnap.data() : {};
+          if (remote.deletedRecords) mergeRemoteDeletedRegistry(remote.deletedRecords);
+  
+          const students = mergeStudentsSafely(
+            Array.isArray(remote.students) ? remote.students : [],
+            studentsList
+          );
+          const leads = mergeRecordsByKeySafely(
+            Array.isArray(remote.leads) ? remote.leads : [],
+            Array.isArray(updatedData.leads) ? updatedData.leads : [],
+            'id',
+            'leads'
+          );
+          const batches = mergeRecordsByKeySafely(
+            Array.isArray(remote.batches) ? remote.batches : [],
+            Array.isArray(updatedData.batches) ? updatedData.batches : [],
+            'code',
+            'batches'
+          );
+          const courses = mergeRecordsByKeySafely(
+            Array.isArray(remote.courses) ? remote.courses : [],
+            Array.isArray(updatedData.courses) ? updatedData.courses : [],
+            'id',
+            'courses'
+          );
+          const staff = mergeRecordsByKeySafely(
+            Array.isArray(remote.staff) ? remote.staff : [],
+            Array.isArray(updatedData.staff) ? updatedData.staff : [],
+            'id',
+            'staff'
+          );
+          const deleted = readDeletedRegistry();
+          const finalPayload = sanitizeForFirestore({
+            ...remote,
+            ...masterPayload,
+            students: students.filter((item: any) => !deleted.students.includes(String(item.id))),
+            leads: leads.filter((item: any) => !deleted.leads.includes(String(item.id))),
+            batches: batches.filter((item: any) => !deleted.batches.includes(String(item.code || item.id))),
+            courses: courses.filter((item: any) => !deleted.courses.includes(String(item.id))),
+            staff: staff.filter((item: any) => !deleted.staff.includes(String(item.id))),
+            attendance: mergeAttendanceSafely(remote.attendance || {}, updatedData.attendance || {}),
+            settings: { ...(remote.settings || {}), ...(masterPayload.settings || {}) },
+            deletedRecords: deleted,
+            updatedAt: nowIso,
+            revision: Number(remote.revision || 0) + 1,
+            syncSchemaVersion: 2,
+            serverUpdatedAt: serverTimestamp(),
+            workspaceId: SHARED_INSTITUTE_ROOT_ID
+          });
+          transaction.set(sharedWorkspaceRef, finalPayload, { merge: false });
+        }),
+        { maxAttempts: 5, baseDelayMs: 500, timeoutMs: 15000, label: 'Transactional canonical master sync' }
+      );
+    }
     recordCloudWriteSuccess();
     console.log(`[Sync Engine] Cloud push success to institutes/${SHARED_INSTITUTE_ROOT_ID} & institutes/${userId}`);
     return true;
@@ -3798,12 +3812,12 @@ export async function fetchMasterSnapshotFromFirestore(
 
 export const fetchMasterInstituteFromFirestore = fetchMasterSnapshotFromFirestore;
 
-export async function syncFullStateToFirestore(state: AppState): Promise<boolean> {
+export async function syncFullStateToFirestore(state: AppState, forceReplace = false): Promise<boolean> {
   if (!(await ensureAuthorizedSession())) return false;
   setSyncEngineWorking(true);
   try {
     const [masterOk] = await Promise.all([
-      autoSaveToFirestoreMaster(state, 'institute_master_data'),
+      autoSaveToFirestoreMaster(state, 'institute_master_data', forceReplace),
       Promise.all([
         syncStudentsToFirestore(state.students),
         syncLeadsToFirestore(state.leads),
