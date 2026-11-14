@@ -36,7 +36,8 @@ import {
   getDeterministicCourseId,
   getDeterministicExpenseId,
   upsertCanonicalWorkspaceRecord,
-  deleteCanonicalWorkspaceRecord
+  deleteCanonicalWorkspaceRecord,
+  updateCanonicalWorkspaceSettings
 } from './firebase';
 
 export {
@@ -259,25 +260,14 @@ export function saveGoogleSheetWebhookUrl(
     }
   }
 
-  // Also persist asynchronously to Firestore settings if user is authorized
+  // Persist integration settings in the same canonical workspace used by every device.
   if (isAuthorizedUser(auth.currentUser)) {
-    Promise.resolve().then(async () => {
-      try {
-        const settingsRef = doc(db, 'settings', 'institute_profile');
-        await setDoc(
-          settingsRef,
-          {
-            appsScriptWebhookUrl: activeUrl,
-            appsScriptEndpointMode: resolvedMode,
-            appsScriptLibraryId: DEFAULT_APPS_SCRIPT_LIBRARY_ID,
-            appsScriptLibraryUrl: DEFAULT_APPS_SCRIPT_LIBRARY_URL,
-            updatedAt: serverTimestamp()
-          },
-          { merge: true }
-        );
-      } catch {
-        // non-blocking
-      }
+    void updateCanonicalWorkspaceSettings({
+      appsScriptWebhookUrl: activeUrl,
+      appsScriptEndpointMode: resolvedMode,
+      appsScriptLibraryId: DEFAULT_APPS_SCRIPT_LIBRARY_ID,
+      appsScriptLibraryUrl: DEFAULT_APPS_SCRIPT_LIBRARY_URL,
+      updatedAt: new Date().toISOString()
     });
   }
 
