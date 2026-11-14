@@ -1678,69 +1678,8 @@ export async function masterFetchFromCloud(
     console.warn('Firestore fetch warning:', err);
   }
 
-  // 2. Check Custom Firebase Realtime DB / REST URL if configured
-  const customUrl = mergedState.settings?.cloudConfig?.firebaseUrl?.trim();
-  if (customUrl && /^https?:\/\//i.test(customUrl)) {
-    try {
-      const base = customUrl.replace(/\/+$/, '').replace(/\/(srujaan_main_store|instituteDB)\.json$/i, '');
-      const tokenParam = mergedState.settings?.cloudConfig?.authToken
-        ? `?auth=${encodeURIComponent(mergedState.settings.cloudConfig.authToken)}`
-        : '';
-      let resp = await fetchWithTimeout(`${base}/srujaan_main_store.json${tokenParam}`, {}, 10000);
-      if (!resp.ok) {
-        resp = await fetchWithTimeout(`${base}/instituteDB.json${tokenParam}`, {}, 10000);
-      }
-      if (resp.ok) {
-        const remoteDB: any = await resp.json();
-        const remotePayload = remoteDB?.payload || remoteDB;
-        if (remotePayload && Array.isArray(remotePayload.students) && !authoritativeCloudApplied) {
-          const cleanStudents = filterActiveRecords<AppState['students'][number]>(
-            remotePayload.students,
-            'students',
-            'id'
-          );
-          const cleanStaff = Array.isArray(remotePayload.staff)
-            ? filterActiveRecords<AppState['staff'][number]>(remotePayload.staff, 'staff', 'id')
-            : mergedState.staff;
-          const cleanCourses = Array.isArray(remotePayload.courses)
-            ? filterActiveRecords<Course>(remotePayload.courses, 'courses', 'id')
-            : mergedState.courses;
-          const cleanBatches = Array.isArray(remotePayload.batches)
-            ? filterActiveRecords<AppState['batches'][number]>(remotePayload.batches, 'batches', 'code')
-            : mergedState.batches;
-          const cleanLeads = Array.isArray(remotePayload.leads)
-            ? filterActiveRecords<AppState['leads'][number]>(remotePayload.leads, 'leads', 'id')
-            : mergedState.leads;
-
-          mergedState = normalizeLoadedState({
-            ...mergedState,
-            students: mergeStudentsSafely(mergedState.students || [], cleanStudents),
-            staff: cleanStaff,
-            courses: cleanCourses,
-            lectures: Array.isArray(remotePayload.lectures) ? remotePayload.lectures : mergedState.lectures,
-            materials: Array.isArray(remotePayload.studyMaterials || remotePayload.materials)
-              ? remotePayload.studyMaterials || remotePayload.materials
-              : mergedState.materials,
-            batches: cleanBatches,
-            leads: mergeRecordsByKeySafely(mergedState.leads || [], cleanLeads, 'id', 'leads'),
-            certificates: Array.isArray(remotePayload.certificates)
-              ? remotePayload.certificates
-              : mergedState.certificates,
-            settings: remoteDB?.settings?.fullSettings
-              ? { ...mergedState.settings, ...remoteDB.settings.fullSettings }
-              : remotePayload.settings
-              ? { ...mergedState.settings, ...remotePayload.settings }
-              : mergedState.settings
-          });
-          (mergedState as any).isSeedData = false;
-          sourcesUsed.push('Firebase RTDB');
-          updated = true;
-        }
-      }
-    } catch (err) {
-      console.warn('Error fetching from custom Firebase REST URL:', err);
-    }
-  }
+  // Firestore canonical workspace is the sole source of truth.
+  // A separately configured RTDB mirror is write-only and must never override Firestore data.
 
   // 3. Check Online Cloud Run Server (/api/cloud/state) as fallback if Firestore was unreachable
   if (!authoritativeCloudApplied) {
