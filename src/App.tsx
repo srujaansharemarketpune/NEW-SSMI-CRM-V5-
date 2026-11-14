@@ -736,6 +736,9 @@ export default function App() {
       } else {
         const fetched = await masterFetchFromCloud(current, { interactiveAuth: false });
         if (fetched.updated && fetched.state) {
+          if (String(fetched.source || '').includes('Firestore')) {
+            isSharedWorkspaceHydratedRef.current = true;
+          }
           const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
           setLastCloudSyncAt(nowStr);
           setState(fetched.state);
