@@ -111,7 +111,6 @@ import {
   deleteBatchFromFirestore,
   deleteStaffFromFirestore,
   deleteCourseFromFirestore,
-  backupStudentData,
   restoreStudentData,
   fetchMasterSnapshotFromFirestore,
   restoreJsonToFirestoreMaster,
@@ -1070,7 +1069,6 @@ export default function App() {
       students: cleanRestored,
       updatedAt: new Date().toISOString()
     }).catch(() => {});
-    backupStudentData(cleanRestored).catch(() => {});
 
     logAudit('Restore', 'Restored Students Database', 'ALL', message);
     showToast(`✓ ${message}`);
@@ -3304,7 +3302,6 @@ export default function App() {
           saveCachedStudents(remaining);
           return { ...prev, students: remaining };
         });
-        backupStudentData(remainingStudents).catch(() => {});
         return {
           success: true,
           actionLabel: 'STUDENTS_PURGED',
