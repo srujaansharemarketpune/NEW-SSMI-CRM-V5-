@@ -141,33 +141,18 @@ export function buildDefaultMasterAdminUser(email = PRIMARY_ADMIN_EMAIL, name?: 
  * so the app boots straight into the dashboard with zero login wall. Returns null only when explicitly signed out.
  */
 export function getInitialAuthSession(): AuthSessionResult | null {
+  // Only a real Firebase Auth user is an authenticated CRM session.
+  // Cached local profiles may restore offline data, but never unlock cloud access.
   if (auth.currentUser && auth.currentUser.email && isAuthorizedUser(auth.currentUser.email)) {
     const role = getUserRole(auth.currentUser.email);
-    if (role !== 'unauthorized') {
-      return { user: auth.currentUser, role };
-    }
-  }
-  const crmSession = loadCrmUserSession();
-  if (crmSession && crmSession.isAuthenticated && isAuthorizedUser(crmSession.email)) {
-    const role = getUserRole(crmSession.email);
-    if (role !== 'unauthorized') {
-      return {
-        user: buildDefaultMasterAdminUser(crmSession.email, crmSession.name),
-        role
-      };
-    }
+    if (role !== 'unauthorized') return { user: auth.currentUser, role };
   }
   return null;
 }
 
-/**
- * Instantly activates / restores the pre-logged-in Master Admin session (`srujaansharemarketpune@gmail.com`) with zero popups
- */
+/** @deprecated Quick-resume local sessions cannot authenticate with Firebase. */
 export function loginWithDefaultMasterAdmin(): AuthSessionResult {
-  const session = restoreDefaultMasterAdminSession();
-  const user = buildDefaultMasterAdminUser(session.email, session.name);
-  savePersistedAdminSession(user, false);
-  return { user, role: 'admin' };
+  throw new Error('Quick Resume is disabled. Continue with Google using srujaansharemarketpune@gmail.com to access shared cloud data.');
 }
 
 let redirectCheckPromise: Promise<AuthSessionResult | null> | null = null;
