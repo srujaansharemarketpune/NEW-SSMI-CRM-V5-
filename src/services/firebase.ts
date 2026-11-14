@@ -2195,7 +2195,6 @@ export function clearAllDeletedTombstones(): void {
 
 export function getSyncDiagnosticsReport(): SyncDiagnosticsReport {
   const realUser = auth.currentUser;
-  const crmSession = loadCrmUserSession();
   const isLiveToken = Boolean(realUser && isAuthorizedUser(realUser));
   const reg = readDeletedRegistry();
   const tombstoneCount =
