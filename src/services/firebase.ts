@@ -722,57 +722,49 @@ export function subscribeToInstituteCollection(
   collName: string,
   onData: (records: any[], meta: { hasPendingWrites: boolean; fromCache: boolean }) => void,
   onError?: (err: any) => void,
-  constraints: QueryConstraint[] = []
+  _constraints: QueryConstraint[] = []
 ): () => void {
-  const listenerKey = `${collName}_${constraints.length}`;
+  const listenerKey = 'canonical_workspace_' + collName;
+  activeListeners.get(listenerKey)?.();
+  activeListeners.delete(listenerKey);
+  const known = ['students', 'leads', 'batches', 'staff', 'courses'].includes(collName);
+  const keyField = collName === 'batches' ? 'code' : 'id';
+  let cancelled = false;
+  let unsubscribe: (() => void) | null = null;
 
-  if (activeListeners.has(listenerKey)) {
-    try {
-      activeListeners.get(listenerKey)?.();
-    } catch {
-      // ignore cleanup error
-    }
-    activeListeners.delete(listenerKey);
-    incrementActiveListenerCount(-1);
-  }
-
-  const baseCol = getInstituteColRef(collName);
-  const q = constraints.length > 0 ? query(baseCol, ...constraints) : query(baseCol);
-
-  incrementActiveListenerCount(1);
-  const unsubscribe = onSnapshot(
-    q,
-    { includeMetadataChanges: true },
-    (snapshot) => {
-      const records: any[] = [];
-      snapshot.forEach((docSnap) => {
-        records.push({
-          id: docSnap.id,
-          ...docSnap.data(),
-          _hasPendingWrites: docSnap.metadata.hasPendingWrites,
-          _fromCache: docSnap.metadata.fromCache
+  void ensureAuthorizedSession().then((authorized) => {
+    if (cancelled || !authorized || !auth.currentUser) return;
+    incrementActiveListenerCount(1);
+    unsubscribe = onSnapshot(
+      doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        const data = snapshot.exists() ? snapshot.data() : {};
+        const source = Array.isArray(data[collName]) ? data[collName] : [];
+        const records = known
+          ? filterActiveRecords(source, collName as keyof DeletedRecordsRegistry, keyField)
+          : source.filter((item: any) => item && !item.isDeleted);
+        setPendingOfflineWritesCount(snapshot.metadata.hasPendingWrites ? 1 : 0);
+        if (!snapshot.metadata.hasPendingWrites) recordCloudReadSuccess();
+        onData(records, {
+          hasPendingWrites: snapshot.metadata.hasPendingWrites,
+          fromCache: snapshot.metadata.fromCache
         });
-      });
-      const deduplicated = deduplicateRecords(records);
-      setPendingOfflineWritesCount(snapshot.metadata.hasPendingWrites ? 1 : 0);
-      if (!snapshot.metadata.hasPendingWrites) {
-        recordCloudReadSuccess();
+      },
+      (error) => {
+        recordSyncError(error?.message || 'Canonical workspace listener failed', error);
+        onError?.(error);
       }
-      onData(deduplicated, {
-        hasPendingWrites: snapshot.metadata.hasPendingWrites,
-        fromCache: snapshot.metadata.fromCache
-      });
-    },
-    (err) => {
-      console.warn(`[Firestore Subscription Notice] on ${collName}:`, err);
-      recordSyncError(err?.message || `Subscription notice on ${collName}`, err);
-      if (onError) onError(err);
-    }
-  );
+    );
+    activeListeners.set(listenerKey, unsubscribe);
+  }).catch((error) => {
+    recordSyncError(error?.message || 'Unable to attach canonical workspace listener', error);
+    onError?.(error);
+  });
 
-  activeListeners.set(listenerKey, unsubscribe);
   return () => {
-    unsubscribe();
+    cancelled = true;
+    unsubscribe?.();
     if (activeListeners.get(listenerKey) === unsubscribe) {
       activeListeners.delete(listenerKey);
       incrementActiveListenerCount(-1);
@@ -4004,109 +3996,50 @@ export function subscribeToCanonicalCollection<T extends Record<string, any>>(
   onUpdateOrKeyField?: ((records: T[]) => void) | string,
   onError?: (err: any) => void
 ): () => void {
-  const keyField: string =
-    typeof keyFieldOrOnUpdate === 'string'
-      ? keyFieldOrOnUpdate
-      : typeof onUpdateOrKeyField === 'string'
-      ? onUpdateOrKeyField
-      : 'id';
-  const onUpdate: (records: T[]) => void =
-    typeof keyFieldOrOnUpdate === 'function'
-      ? keyFieldOrOnUpdate
-      : typeof onUpdateOrKeyField === 'function'
-      ? onUpdateOrKeyField
-      : () => {};
+  const keyField = typeof keyFieldOrOnUpdate === 'string'
+    ? keyFieldOrOnUpdate
+    : typeof onUpdateOrKeyField === 'string'
+    ? onUpdateOrKeyField
+    : collectionName === 'batches' ? 'code' : 'id';
+  const onUpdate: (records: T[]) => void = typeof keyFieldOrOnUpdate === 'function'
+    ? keyFieldOrOnUpdate
+    : typeof onUpdateOrKeyField === 'function'
+    ? onUpdateOrKeyField
+    : () => {};
+  const known = ['students', 'leads', 'batches', 'staff', 'courses'].includes(collectionName);
+  let cancelled = false;
+  let unsubscribe: (() => void) | null = null;
 
-  let unsubSsmi: (() => void) | null = null;
-  let unsubInstitute: (() => void) | null = null;
-  let isCancelled = false;
-  let ssmiDocs: T[] = [];
-  let instituteDocs: T[] = [];
-
-  const knownCol =
-    collectionName === 'students' ||
-    collectionName === 'leads' ||
-    collectionName === 'batches' ||
-    collectionName === 'staff' ||
-    collectionName === 'courses'
-      ? (collectionName as keyof DeletedRecordsRegistry)
-      : null;
-
-  const emitMerged = () => {
-    const merged = mergeRecordsByKeySafely(
-      instituteDocs,
-      ssmiDocs,
-      keyField,
-      knownCol || collectionName
-    );
-    onUpdate(merged);
-  };
-
-  ensureAuthorizedSession().then((authorized) => {
-    if (isCancelled || !authorized || !auth.currentUser) return;
-    incrementActiveListenerCount(2);
-
-    unsubSsmi = onSnapshot(
-      getSsmiColRef(collectionName),
+  void ensureAuthorizedSession().then((authorized) => {
+    if (cancelled || !authorized || !auth.currentUser) return;
+    incrementActiveListenerCount(1);
+    unsubscribe = onSnapshot(
+      doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID),
+      { includeMetadataChanges: true },
       (snapshot) => {
-        const tombstones = knownCol ? getDeletedIds(knownCol) : new Set<string>();
-        snapshot.docChanges().forEach((change) => {
-          const d = change.doc.data();
-          const id = String(d?.[keyField] || d?.id || change.doc.id);
-          if ((change.type === 'removed' || d?.isDeleted === true) && knownCol) {
-            markDeletedId(knownCol, id);
-            tombstones.add(id);
-          }
-        });
-        ssmiDocs = snapshot.docs
-          .map((docSnap) => ({ ...docSnap.data(), [keyField]: docSnap.data()[keyField] || docSnap.id } as T))
-          .filter((item) => !item.isDeleted && !tombstones.has(String(item[keyField] || item.id)));
-        recordRemoteSnapshotPulse();
-        emitMerged();
+        const data = snapshot.exists() ? snapshot.data() : {};
+        const source = Array.isArray(data[collectionName]) ? data[collectionName] : [];
+        const records = known
+          ? filterActiveRecords(source, collectionName as keyof DeletedRecordsRegistry, keyField)
+          : source.filter((item: any) => item && !item.isDeleted);
+        setPendingOfflineWritesCount(snapshot.metadata.hasPendingWrites ? 1 : 0);
+        if (!snapshot.metadata.hasPendingWrites) recordCloudReadSuccess();
+        onUpdate(records as T[]);
       },
-      (err) => {
-        console.warn(`[Firestore Listener] ssmi_crm_data/${collectionName} notice:`, err.message);
-        if (onError) onError(err);
+      (error) => {
+        recordSyncError(error?.message || 'Canonical workspace listener failed', error);
+        onError?.(error);
       }
     );
-
-    unsubInstitute = onSnapshot(
-      getColRef(collectionName),
-      (snapshot) => {
-        const tombstones = knownCol ? getDeletedIds(knownCol) : new Set<string>();
-        snapshot.docChanges().forEach((change) => {
-          const d = change.doc.data();
-          const id = String(d?.[keyField] || d?.id || change.doc.id);
-          if ((change.type === 'removed' || d?.isDeleted === true) && knownCol) {
-            markDeletedId(knownCol, id);
-            tombstones.add(id);
-          }
-        });
-        instituteDocs = snapshot.docs
-          .map((docSnap) => ({ ...docSnap.data(), [keyField]: docSnap.data()[keyField] || docSnap.id } as T))
-          .filter((item) => !item.isDeleted && !tombstones.has(String(item[keyField] || item.id)));
-        recordRemoteSnapshotPulse();
-        emitMerged();
-      },
-      (err) => {
-        console.warn(`[Firestore Listener] institutes/${collectionName} notice:`, err.message);
-        if (onError) onError(err);
-      }
-    );
+  }).catch((error) => {
+    recordSyncError(error?.message || 'Unable to attach canonical workspace listener', error);
+    onError?.(error);
   });
 
   return () => {
-    isCancelled = true;
-    if (unsubSsmi) {
-      incrementActiveListenerCount(-1);
-      unsubSsmi();
-      unsubSsmi = null;
-    }
-    if (unsubInstitute) {
-      incrementActiveListenerCount(-1);
-      unsubInstitute();
-      unsubInstitute = null;
-    }
+    cancelled = true;
+    unsubscribe?.();
+    if (unsubscribe) incrementActiveListenerCount(-1);
   };
 }
 
