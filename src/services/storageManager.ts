@@ -621,11 +621,15 @@ export function getCloudIntegrationConfig(): CloudIntegrationConfig {
     const raw = localStorage.getItem(CLOUD_CONFIG_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const savedFormUrl = String(parsed.googleFormUrl || '').trim();
+      const isOldPlaceholderForm = savedFormUrl.includes('1FAIpQLScD8yH9K4m7P1J4Z-Srujaan-Admission-Form');
       return {
         ...defaults,
         ...parsed,
         accountEmail: PRIMARY_INSTITUTE_EMAIL,
-        execUrl: (parsed.execUrl || defaults.execUrl).trim()
+        execUrl: (parsed.execUrl || defaults.execUrl).trim(),
+        googleFormUrl: isOldPlaceholderForm ? defaults.googleFormUrl : (savedFormUrl || defaults.googleFormUrl),
+        googleFormEmbedUrl: isOldPlaceholderForm ? defaults.googleFormEmbedUrl : (parsed.googleFormEmbedUrl || defaults.googleFormEmbedUrl)
       };
     }
   } catch {
