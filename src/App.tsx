@@ -165,6 +165,15 @@ export default function App() {
     initialAuthRef.current?.user?.email?.toLowerCase().trim() || null
   );
 
+  // Only a confirmed Firestore commit enables incoming snapshots to replace local cache.
+  useEffect(() => {
+    const onCanonicalSyncSuccess = () => {
+      isSharedWorkspaceHydratedRef.current = true;
+    };
+    window.addEventListener('ssm-canonical-sync-success', onCanonicalSyncSuccess);
+    return () => window.removeEventListener('ssm-canonical-sync-success', onCanonicalSyncSuccess);
+  }, []);
+
   // Top-level mount effect: ensure browserSessionPersistence & handle getRedirectResult(auth) safely
   useEffect(() => {
     let mounted = true;
