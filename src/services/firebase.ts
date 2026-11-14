@@ -1588,11 +1588,8 @@ if (typeof window !== 'undefined') {
             cachedAccessToken = null;
             diagCloudConnected = false;
             diagActiveListenersCount = 0;
-            if (loadCrmUserSession()?.isAuthenticated) {
-              diagSyncState = typeof navigator === 'undefined' || navigator.onLine ? 'Connected' : 'Offline';
-              diagLastSyncError = null;
-              diagErrorCategory = null;
-            }
+            // Local CRM profile data never indicates a live Firebase connection.
+            diagSyncState = typeof navigator === 'undefined' || navigator.onLine ? 'Pending' : 'Offline';
             notifySyncStatusListeners();
           }
         } catch (cbErr) {
@@ -1600,7 +1597,7 @@ if (typeof window !== 'undefined') {
         }
       },
       (authErr) => {
-        console.warn('[Firebase Auth Listener Notice]: Falling back silently to default Master Admin session:', authErr);
+        console.warn('[Firebase Auth Listener Notice]: Firebase authentication state could not be read:', authErr);
       }
     );
   } catch (initErr) {
