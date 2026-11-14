@@ -111,7 +111,6 @@ import {
   deleteStaffFromFirestore,
   deleteCourseFromFirestore,
   restoreStudentData,
-  fetchMasterSnapshotFromFirestore,
   restoreJsonToFirestoreMaster,
   autoSaveToFirestoreMaster,
   mergeStudentsSafely,
@@ -124,8 +123,6 @@ import {
   getDeterministicPaymentId,
   recordSyncError,
   createLocalSafetyBackup,
-  flushPendingSyncOutbox,
-  getPendingSyncOperations,
   formatFirebaseAuthError,
   FormattedFirebaseAuthError,
   getCurrentActorEmail,
@@ -4265,6 +4262,7 @@ export default function App() {
 
       const result = raceResult;
       if (result.state) {
+        isSharedWorkspaceHydratedRef.current = true;
         const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
         setLastCloudSyncAt(nowStr);
         setState(result.state);
