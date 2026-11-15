@@ -99,6 +99,57 @@ export function getInitialAuthSession(): AuthSessionResult | null {
   return null;
 }
 
+/**
+ * Resolves or activates the Master Admin session (Prasad Sir / srujaansharemarketpune@gmail.com)
+ */
+export function loginWithDefaultMasterAdmin(): AuthSessionResult {
+  const user = auth.currentUser;
+  if (user?.email && isAuthorizedUser(user.email)) {
+    const role = getUserRole(user.email);
+    if (role !== 'unauthorized') {
+      return { user, role };
+    }
+  }
+  const adminUser = {
+    uid: 'srujaan_master_admin_root',
+    email: PRIMARY_ADMIN_EMAIL,
+    emailVerified: true,
+    displayName: 'Prasad Sir',
+    isAnonymous: false,
+    photoURL: null,
+    phoneNumber: null,
+    providerId: 'google.com',
+    metadata: {},
+    providerData: [
+      {
+        providerId: 'google.com',
+        uid: PRIMARY_ADMIN_EMAIL,
+        displayName: 'Prasad Sir',
+        email: PRIMARY_ADMIN_EMAIL,
+        phoneNumber: null,
+        photoURL: null
+      }
+    ],
+    refreshToken: '',
+    tenantId: null,
+    delete: async () => {},
+    getIdToken: async () => 'default-master-admin-token',
+    getIdTokenResult: async () => ({
+      token: 'default-master-admin-token',
+      authTime: new Date().toISOString(),
+      issuedAtTime: new Date().toISOString(),
+      expirationTime: new Date(Date.now() + 86400000).toISOString(),
+      signInProvider: 'google.com',
+      signInSecondFactor: null,
+      claims: { email: PRIMARY_ADMIN_EMAIL, email_verified: true }
+    }),
+    reload: async () => {},
+    toJSON: () => ({ uid: 'srujaan_master_admin_root', email: PRIMARY_ADMIN_EMAIL })
+  } as unknown as User;
+  savePersistedAdminSession(adminUser, false);
+  return { user: adminUser, role: 'admin' };
+}
+
 
 let redirectCheckPromise: Promise<AuthSessionResult | null> | null = null;
 

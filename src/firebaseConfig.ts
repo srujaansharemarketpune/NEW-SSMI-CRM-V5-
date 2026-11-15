@@ -1,12 +1,5 @@
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
+// Srujaan Share Market Institute CRM - Firebase Configuration Bridge
+export const firebaseTestConfig = {
   apiKey: "AIzaSyCDMvQApaEbP3GBsNaWZkyWSGStdwiokCI",
   authDomain: "crm-test-f9790.firebaseapp.com",
   projectId: "crm-test-f9790",
@@ -16,9 +9,7 @@ const firebaseConfig = {
   measurementId: "G-H2BMFBZ7YX"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);export {
+export {
   firebaseConfig,
   resolvedFirebaseConfig,
   DEFAULT_FIREBASE_CONFIG,
