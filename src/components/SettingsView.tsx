@@ -64,6 +64,7 @@ import {
   StrictStudentSyncResult,
   ACTIVE_FIREBASE_PROJECT_ID
 } from '../services/firebase';
+import { migrateLocalAndLegacyDataToCloud } from '../services/storageService';
 
 interface SettingsViewProps {
   state: AppState;
@@ -669,7 +670,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1.5 max-w-2xl">
-            Every change made in Settings or across Students, Courses, Lectures, and Fees is automatically saved locally (`localStorage` + `IndexedDB`) and mirrored online to Cloud Server & Firebase every 2 minutes.
+            Every change made in Settings or across Students, Courses, Lectures, and Fees is automatically saved directly to Firebase Cloud Firestore (`new-project-ssmi` • `institutes/ssmi_master_db`) in real time.
           </p>
         </div>
 
@@ -881,7 +882,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               />
             </div>
             <p className="text-[10px] text-slate-500 leading-tight">
-              Local IndexedDB & localStorage mirror active. Fast offline response on all tablets.
+              100% Online Firebase Cloud Firestore (`institutes/ssmi_master_db`) real-time sync active across all devices.
             </p>
           </div>
         </div>
@@ -1282,7 +1283,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         </h2>
                       </div>
                       <p className="text-xs text-slate-500 mt-1">
-                        Manually enter your main campus or branch address. Saved directly into <code className="font-mono text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">instituteDB.settings.primaryAddress</code> and <code className="font-mono text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">localStorage</code>.
+                        Manually enter your main campus or branch address. Saved directly into <code className="font-mono text-[11px] bg-slate-100 px-1.5 py-0.5 rounded">institutes/ssmi_master_db/settings/institute_profile</code>.
                       </p>
                     </div>
 
@@ -2373,6 +2374,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <Cloud className="w-3.5 h-3.5" />
                       <span>Sync All Storages Now</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setReconcileStatusMsg('Migrating legacy & runtime records to institutes/ssmi_master_db...');
+                        const mig = await migrateLocalAndLegacyDataToCloud(state);
+                        setDiagReport(getSyncDiagnosticsReport());
+                        setReconcileStatusMsg(mig.ok ? `✓ ${mig.message}` : `⚠️ ${mig.message}`);
+                        if (onToast) onToast(mig.message);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-md transition-all"
+                    >
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      <span>Sync / Migrate Local Data to Cloud</span>
+                    </button>
                   </div>
                 </div>
 
@@ -2512,7 +2528,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <span>Master Cloud & Firebase Command Center</span>
                     </h2>
                     <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
-                      Every student, staff member, course, lecture, study material, attendance mark, fee receipt, and setting is automatically saved to browser memory (`localStorage` + `IndexedDB` + `window.instituteDB`) and mirrored online. Use the master controls below to force an immediate cloud push or pull at any time.
+                      Every student, staff member, course, lecture, study material, attendance mark, fee receipt, and setting is automatically saved directly to Firebase Cloud Firestore (`institutes/ssmi_master_db`) in real time. Use the master controls below to force an immediate cloud push or pull at any time.
                     </p>
                   </div>
 

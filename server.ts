@@ -68,43 +68,63 @@ function markModelCooldown(model: string, errMsg: string) {
   modelCooldownUntil.set(model, Date.now() + cooldownMs);
 }
 
-function resolvePrimaryApiKey(customClientKey?: string): string {
-  const custom = (customClientKey || '').trim();
-  const envGemini = (process.env.GEMINI_API_KEY || '').trim();
-  const envViteGemini = (process.env.VITE_GEMINI_API_KEY || '').trim();
-  const envApiKey = (process.env.API_KEY || '').trim();
-  const envSsmi = (process.env.SSMIGEMINI_API_KEY || '').trim();
-  for (const k of [custom, envGemini, envViteGemini, envApiKey, envSsmi]) {
-    if (k && k.startsWith('AIza')) return k;
+function isValidApiKeyCandidate(val?: string): boolean {
+  const trimmed = (val || '').trim();
+  if (!trimmed || trimmed.length < 8) return false;
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === 'undefined' ||
+    lower === 'null' ||
+    lower.includes('your_api_key') ||
+    lower.includes('placeholder') ||
+    lower === 'my_gemini_api_key'
+  ) {
+    return false;
   }
-  return custom || envGemini || envViteGemini || envApiKey || envSsmi || '';
+  return true;
+}
+
+function resolvePrimaryApiKey(customClientKey?: string): string {
+  const candidates = [
+    customClientKey,
+    process.env.GEMINI_API_KEY,
+    process.env.API_KEY,
+    process.env.VITE_GEMINI_API_KEY,
+    process.env.SSMIGEMINI_API_KEY,
+  ];
+  for (const k of candidates) {
+    if (isValidApiKeyCandidate(k)) return String(k).trim();
+  }
+  return '';
 }
 
 function getCandidateApiKeys(customClientKey?: string): string[] {
   const rawKeys = [
     customClientKey,
     process.env.GEMINI_API_KEY,
-    process.env.VITE_GEMINI_API_KEY,
     process.env.API_KEY,
+    process.env.VITE_GEMINI_API_KEY,
     process.env.SSMIGEMINI_API_KEY,
   ];
   const unique: string[] = [];
   for (const k of rawKeys) {
     const trimmed = typeof k === 'string' ? k.trim() : '';
-    if (trimmed && trimmed.startsWith('AIza') && !unique.includes(trimmed)) {
+    if (isValidApiKeyCandidate(trimmed) && !unique.includes(trimmed)) {
       unique.push(trimmed);
     }
+  }
+  if (unique.length === 0) {
+    unique.push('');
   }
   return unique;
 }
 
-function getGenAIClient(apiKey: string) {
+function getGenAIClient(apiKey?: string) {
+  const cleanKey = (apiKey || process.env.GEMINI_API_KEY || '').trim();
   return new GoogleGenAI({
-    apiKey,
+    ...(cleanKey ? { apiKey: cleanKey } : {}),
     httpOptions: {
       headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
         'User-Agent': 'aistudio-build',
       },
     },
@@ -738,13 +758,20 @@ function buildQuotaFallbackResult(
     };
   }
 
-  // 6. Check Add / Enroll / Create Student or Lead intent (including shorthand like "Rahul 9876543210 foundation add student")
+  // 6. Check Add / Enroll / Create Student or Lead intent (including incomplete shorthand like "Rahul 9876543210" or "add rahul")
+  const isBareNameAndPhone =
+    !matchedPersonName &&
+    Boolean(parsedPhone) &&
+    /^[A-Za-z][A-Za-z\s]{1,28}\s+[6-9]\d{9}\b/i.test(cleanPrompt) &&
+    !/\b(update|change|delete|remove|search|find)\b/i.test(lower);
+
   if (
-    (/\b(add|enroll|create|register)\s+(?:a\s+)?(?:new\s+)?(student|admission|lead|inquiry|enquiry)\b/i.test(lower) ||
+    isBareNameAndPhone ||
+    ((/\b(add|enroll|create|register)\s+(?:a\s+)?(?:new\s+)?(student|admission|lead|inquiry|enquiry)\b/i.test(lower) ||
       (/\b(lead|inquiry|enquiry|student|admission)\b/i.test(lower) && /\b(add|enroll|register|create|new)\b/i.test(lower))) &&
-    !/\b(convert|promote)\b/i.test(lower)
+      !/\b(convert|promote)\b/i.test(lower))
   ) {
-    const isLead = /\b(inquiry|lead|enquiry)\b/i.test(lower);
+    const isLead = /\b(inquiry|lead|enquiry)\b/i.test(lower) || (isBareNameAndPhone && parsedFeePaid === undefined);
     let targetName = matchedPersonName;
     if (!targetName) {
       if (isLead) {
@@ -2051,6 +2078,298 @@ const agentFunctionDeclarations: FunctionDeclaration[] = [
       required: ['query'],
     },
   },
+  // Official snake_case CRM & Institute Management Tool Declarations
+  {
+    name: 'get_leads',
+    description: 'Fetch all leads or filter leads by status/stage, course, locality, date, or source.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        status: { type: Type.STRING, description: 'Optional stage or status filter (e.g. New Enquiry, Interested, Follow Up, Converted)' },
+        course: { type: Type.STRING, description: 'Optional course filter' },
+        locality: { type: Type.STRING, description: 'Optional locality/branch filter (e.g. Chinchwad, Pune)' },
+        source: { type: Type.STRING, description: 'Optional source filter' },
+        date: { type: Type.STRING, description: 'Optional enquiry/follow-up date filter (YYYY-MM-DD)' },
+      },
+    },
+  },
+  {
+    name: 'search_leads',
+    description: 'Search leads/inquiries by partial name, phone number, email, course, locality, or status.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: 'Name, phone, email, course, locality, or status to search' },
+        course: { type: Type.STRING, description: 'Optional course filter' },
+        status: { type: Type.STRING, description: 'Optional status/stage filter' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'create_lead',
+    description: 'Add a new lead/inquiry record with available details and sensible defaults.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Full or first name of the lead' },
+        phone: { type: Type.STRING, description: '10-digit mobile number (leave empty if omitted)' },
+        email: { type: Type.STRING, description: 'Optional email address' },
+        course: { type: Type.STRING, description: 'Interested course name or abbreviation (Basic, Advance, F&O, Forex, Complete)' },
+        locality: { type: Type.STRING, description: 'City or branch locality (e.g. Chinchwad, Pune)' },
+        source: { type: Type.STRING, description: 'Lead source (defaults to AI Copilot)' },
+        status: { type: Type.STRING, description: 'Initial lead stage/status (defaults to New Enquiry)' },
+        followUpDate: { type: Type.STRING, description: 'Follow-up date YYYY-MM-DD' },
+        notes: { type: Type.STRING, description: 'Additional counselor notes' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'update_lead',
+    description: 'Update an existing lead record (status/stage, course, phone, locality, notes, or follow-up date).',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Lead name, phone number, or Lead ID' },
+        updates: {
+          type: Type.OBJECT,
+          description: 'Fields to update on the lead',
+          properties: {
+            name: { type: Type.STRING },
+            phone: { type: Type.STRING },
+            email: { type: Type.STRING },
+            course: { type: Type.STRING },
+            stage: { type: Type.STRING },
+            status: { type: Type.STRING },
+            locality: { type: Type.STRING },
+            followUpDate: { type: Type.STRING },
+            notes: { type: Type.STRING },
+          },
+        },
+      },
+      required: ['identifier', 'updates'],
+    },
+  },
+  {
+    name: 'delete_lead',
+    description: 'Delete a lead record after safety confirmation check (Master Admin only).',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Lead name, phone number, or Lead ID to delete' },
+        confirmed: { type: Type.BOOLEAN, description: 'Set true ONLY if the user explicitly confirmed deletion' },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'convert_lead_to_student',
+    description: 'Convert an existing lead into an active enrolled student and admission record, preserving all lead details and marking the lead as Converted.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Lead name, phone number, or Lead ID to convert' },
+        course: { type: Type.STRING, description: 'Enrolled course name or abbreviation' },
+        batch: { type: Type.STRING, description: 'Assigned batch name or code' },
+        totalFees: { type: Type.NUMBER, description: 'Total course fees in INR' },
+        paidFees: { type: Type.NUMBER, description: 'Initial fees paid in INR' },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'get_students',
+    description: 'Fetch all enrolled students or filter by course, batch, fee status, or admission date.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course: { type: Type.STRING, description: 'Optional course filter' },
+        batch: { type: Type.STRING, description: 'Optional batch filter' },
+        status: { type: Type.STRING, description: 'Optional status filter (Active, On Hold, Completed)' },
+        feeStatus: { type: Type.STRING, description: 'Optional fee filter ("pending" or "paid")' },
+      },
+    },
+  },
+  {
+    name: 'search_students',
+    description: 'Search enrolled students by name, phone, email, course, Registration ID, or batch.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: 'Student name, phone, Registration ID, course, or batch' },
+        course: { type: Type.STRING, description: 'Optional course filter' },
+        batch: { type: Type.STRING, description: 'Optional batch filter' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'create_student',
+    description: 'Enroll and create a new student admission record in SSMI CRM and Firestore.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Full name of the student' },
+        phone: { type: Type.STRING, description: '10-digit mobile number' },
+        course: { type: Type.STRING, description: 'Course name or abbreviation (Basic, Advance, F&O, Forex, Complete)' },
+        batch: { type: Type.STRING, description: 'Assigned batch name or code' },
+        totalFees: { type: Type.NUMBER, description: 'Total course fees in INR' },
+        paidFees: { type: Type.NUMBER, description: 'Fees paid so far in INR' },
+        locality: { type: Type.STRING, description: 'Locality or branch address' },
+        notes: { type: Type.STRING, description: 'Admission notes' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'update_student',
+    description: 'Update student details, course, batch, fee paid, total fee, phone, status, or notes.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Student name, Registration ID, or phone number' },
+        updates: {
+          type: Type.OBJECT,
+          description: 'Fields to update on the student record',
+          properties: {
+            name: { type: Type.STRING },
+            phone: { type: Type.STRING },
+            course: { type: Type.STRING },
+            batch: { type: Type.STRING },
+            paidFees: { type: Type.NUMBER },
+            feePaid: { type: Type.NUMBER },
+            totalFees: { type: Type.NUMBER },
+            status: { type: Type.STRING },
+            notes: { type: Type.STRING },
+          },
+        },
+      },
+      required: ['identifier', 'updates'],
+    },
+  },
+  {
+    name: 'delete_student',
+    description: 'Delete a student record after confirmation check (Master Admin only).',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Student name, Registration ID, or phone number' },
+        confirmed: { type: Type.BOOLEAN, description: 'Set true ONLY if the user explicitly confirmed deletion' },
+      },
+      required: ['identifier'],
+    },
+  },
+  {
+    name: 'get_admissions',
+    description: 'Fetch student admission records with optional course, batch, or date filter.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course: { type: Type.STRING, description: 'Optional course filter' },
+        batch: { type: Type.STRING, description: 'Optional batch filter' },
+        date: { type: Type.STRING, description: 'Optional enrollment date filter (YYYY-MM-DD)' },
+      },
+    },
+  },
+  {
+    name: 'create_admission',
+    description: 'Create a new student admission record in SSMI CRM.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Full name of the student' },
+        phone: { type: Type.STRING, description: '10-digit mobile number' },
+        course: { type: Type.STRING, description: 'Course name or abbreviation' },
+        batch: { type: Type.STRING, description: 'Batch name or code' },
+        totalFees: { type: Type.NUMBER, description: 'Total course fees in INR' },
+        paidFees: { type: Type.NUMBER, description: 'Initial fee paid in INR' },
+        notes: { type: Type.STRING, description: 'Admission notes' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'update_admission',
+    description: 'Update admission details, fee status, installment paid amount, or batch assignment.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        identifier: { type: Type.STRING, description: 'Student name, Registration ID, or phone number' },
+        updates: {
+          type: Type.OBJECT,
+          properties: {
+            course: { type: Type.STRING },
+            batch: { type: Type.STRING },
+            paidFees: { type: Type.NUMBER },
+            totalFees: { type: Type.NUMBER },
+            status: { type: Type.STRING },
+            notes: { type: Type.STRING },
+          },
+        },
+      },
+      required: ['identifier', 'updates'],
+    },
+  },
+  {
+    name: 'get_admission_summary',
+    description: 'Return total admissions, paid fees, pending fees, and course-wise enrollment counts.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+    },
+  },
+  {
+    name: 'get_dashboard_summary',
+    description: 'Return live counts of leads, students, admissions, total fees collected, and pending fees.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+    },
+  },
+  {
+    name: 'search_all_records',
+    description: 'Search across leads, students, and admissions together by keyword, name, phone, course, or locality.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: 'Search query across all CRM records' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'get_pending_followups',
+    description: 'Return open leads/inquiries requiring follow-up today or overdue.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course: { type: Type.STRING, description: 'Optional course filter' },
+      },
+    },
+  },
+  {
+    name: 'get_pending_fees',
+    description: 'Return active students with pending/unpaid fee balances.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course: { type: Type.STRING, description: 'Optional course filter' },
+        batch: { type: Type.STRING, description: 'Optional batch filter' },
+      },
+    },
+  },
+  {
+    name: 'generate_reports',
+    description: 'Generate analytical CRM summaries by date (today_admissions, recent_records), course, batch, or fee recovery.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        reportType: { type: Type.STRING, description: '"today_admissions", "recent_records", "course_summary", "fee_recovery", or "comprehensive"' },
+        days: { type: Type.NUMBER, description: 'Number of days to look back (default 7)' },
+      },
+    },
+  },
 ];
 
 async function startServer() {
@@ -2502,7 +2821,9 @@ async function startServer() {
             fn =>
               fn.name !== 'deleteRecord' &&
               fn.name !== 'deleteStudent' &&
+              fn.name !== 'delete_student' &&
               fn.name !== 'deleteLead' &&
+              fn.name !== 'delete_lead' &&
               fn.name !== 'deleteStudentRecord' &&
               fn.name !== 'delete_record' &&
               fn.name !== 'executeSystemDiagnosticAndRepair' &&
@@ -2514,9 +2835,12 @@ async function startServer() {
         ? `\n\nCURRENT SSMI CRM LIVE DATABASE SNAPSHOT (JSON):\n${typeof ledgerSnapshot === 'string' ? ledgerSnapshot : JSON.stringify(ledgerSnapshot)}`
         : '';
 
-      const systemInstruction = `You are the Executive AI Admin Agent for Srujaan Share Market Institute (SSMI CRM), assisting Founder & Lead Mentor Prasad Sir (srujaansharemarketpune@gmail.com).
-- You have full Read, Write, Modify, Delete, Duplicate-Detection, Reporting, and Lead-to-Student conversion authority over the SSMI CRM database, plus live Google Search internet access.
-- When given short, casual, or incomplete commands (e.g., 'Rahul 9876543210 foundation add student', 'Find all leads from Chinchwad', 'Change all interested leads to Follow-up', 'Delete duplicate inquiries', 'Find records added in the last seven days', 'Give me a complete summary of today\'s admissions', or 'what is Nifty 50 today?'), infer the intent immediately and call the appropriate tool(s).
+      const systemInstruction = `You are Candle AI, the official AI Institute Management Assistant & Live Market Copilot for Srujaan Share Market Institute (SSMI CRM), assisting Founder & Lead Mentor Prasad Sir (srujaansharemarketpune@gmail.com).
+- You are connected to the live SSMI CRM application and Firebase Cloud Firestore database (institutes/ssmi_master_db/*).
+- You have full Read, Search, Create, Update, Delete (with confirmation), Duplicate-Detection, Reporting, and Lead-to-Student Conversion authority using your declared Function Calling tools.
+- INCOMPLETE SENTENCE & SHORTHAND AUTO-COMPLETION: If the user types an incomplete sentence, fragment, typo, or shorthand input (for example: "rahul 9876543210", "monika 15000", "convert rohan", "pending fees", "nifty today", "what is option greek", "add lead sneha f&o"), automatically infer and complete the user's intended sentence, state the completed interpretation briefly if helpful, and immediately execute the matching Function Calling tool or provide the complete answer.
+- Whenever the user asks to search, list, add, create, enroll, update, modify, convert, or delete any lead, student, or admission, or asks for pending follow-ups, pending fees, dashboard stats, or reports, ALWAYS call the matching Function Calling tool so the real database operation executes in the system.
+- For general questions, live stock market / trading education questions (Nifty 50, Bank Nifty, Sensex, Price Action, F&O, Risk Management), drafting WhatsApp messages, or explanations, answer directly and naturally in well-structured Markdown.
 - STRICT FACTUAL INTEGRITY: Never invent phone numbers, fee payments, dates, or student identities when optional fields are omitted. Leave omitted optional phone numbers empty and omitted paidFees as 0.
 - CONVERSATIONAL CONTEXT: If the user says "his", "her", "him", "this lead", or "this student", resolve it to the most recently referenced record in the conversation or lastReferencedRecord in the snapshot.
 - Support English, Hindi, and Marathi commands seamlessly.
@@ -2529,10 +2853,9 @@ SSMI Official Course & Fee Mapping:
 - Complete -> Complete Trader Program (₹15,000)
 
 Available CRM Function Tools:
-- searchStudents, getStudentDetails, createStudent, updateStudent, deleteStudent
-- searchLeads, getLeadDetails, createLead, updateLead, deleteLead
-- convertLeadToStudent, findDuplicateRecords, getPendingFees, getAttendanceSummary
-- getDashboardStatistics, searchCRMRecords, generateCRMReports, bulkUpdateLeads${snapshotBlock}`;
+- Lead Tools: get_leads, search_leads, create_lead, update_lead, delete_lead, convert_lead_to_student (and aliases searchLeads, getLeadDetails, createLead, updateLead, deleteLead, convertLeadToStudent, bulkUpdateLeads)
+- Student & Admission Tools: get_students, search_students, create_student, update_student, delete_student, get_admissions, create_admission, update_admission, get_admission_summary (and aliases searchStudents, getStudentDetails, createStudent, updateStudent, deleteStudent)
+- General & Admin Tools: get_dashboard_summary, search_all_records, get_pending_followups, get_pending_fees, generate_reports, findDuplicateRecords, getAttendanceSummary, searchWeb${snapshotBlock}`;
 
       const isFollowUpTurn =
         Boolean(modelTurnContent) && Array.isArray(functionResponses) && functionResponses.length > 0;
@@ -2571,26 +2894,23 @@ Available CRM Function Tools:
       }
 
       const preferredModel = aiConfig?.preferredModel || 'gemini-2.5-flash';
-      const enableSearch = aiConfig?.enableGoogleSearch !== false;
-      const enableFallback = aiConfig?.enableAutoFallback !== false;
+      const isLiveWebQuery =
+        !isFollowUpTurn &&
+        /\b(what\s+is\s+today'?s\s+(?:nifty|bank\s*nifty|sensex|market)|today'?s\s+(?:nifty|bank\s*nifty|sensex|market)|live\s+(?:nifty|bank\s*nifty|sensex|market|share\s*price|stock\s*price)|nifty\s+today|bank\s*nifty\s+today|market\s+news|rbi\s+policy|sebi\s+rule|latest\s+ipo|fii\s+dii|search\s+(?:the\s+)?web|google\s+search)\b/i.test(
+          prompt
+        );
 
       const baseModels = [
-        { model: preferredModel, combineSearchAndTools: enableSearch },
-        ...(enableFallback
-          ? [
-              { model: 'gemini-2.5-flash', combineSearchAndTools: enableSearch },
-              { model: 'gemini-3.8-flash', combineSearchAndTools: enableSearch },
-              { model: 'gemini-3.8-flash', combineSearchAndTools: false },
-              { model: 'gemini-3.1-flash-lite', combineSearchAndTools: false },
-              { model: 'gemini-2.5-flash-lite', combineSearchAndTools: false },
-            ]
-          : [{ model: preferredModel, combineSearchAndTools: false }]),
+        { model: 'gemini-4-hydrogen', useGoogleSearchOnly: isLiveWebQuery },
+        { model: 'gemini-3.1-flash-lite', useGoogleSearchOnly: isLiveWebQuery },
+        { model: preferredModel, useGoogleSearchOnly: false },
+        { model: 'gemini-2.5-flash', useGoogleSearchOnly: false },
+        { model: 'gemini-2.5-flash-lite', useGoogleSearchOnly: false },
       ];
-      // Deduplicate consecutive identical configs
       const candidateModels = baseModels.filter(
         (m, idx, arr) =>
           arr.findIndex(
-            x => x.model === m.model && x.combineSearchAndTools === m.combineSearchAndTools
+            x => x.model === m.model && x.useGoogleSearchOnly === m.useGoogleSearchOnly
           ) === idx
       );
 
@@ -2609,22 +2929,44 @@ Available CRM Function Tools:
             continue;
           }
           try {
-            const toolsConfig: any[] = candidate.combineSearchAndTools
-              ? [{ googleSearch: {} }, { functionDeclarations: activeDeclarations }]
+            const toolsConfig: any[] | undefined = isFollowUpTurn
+              ? undefined
+              : candidate.useGoogleSearchOnly
+              ? [{ googleSearch: {} }]
               : [{ functionDeclarations: activeDeclarations }];
 
             const requestConfig: any = {
               systemInstruction,
-              tools: toolsConfig,
-              ...(candidate.combineSearchAndTools
-                ? { toolConfig: { includeServerSideToolInvocations: true } }
-                : {}),
+              ...(toolsConfig ? { tools: toolsConfig } : {}),
             };
+
+            let effectiveContents = contents;
+            if (isFollowUpTurn) {
+              // Build a clean synthesis prompt from the executed tool results so all models synthesize reliably
+              const toolResultsText = (functionResponses || [])
+                .map((fr: any) => {
+                  const fnName = fr?.functionResponse?.name || 'crm_tool';
+                  const resObj = fr?.functionResponse?.response?.result || {};
+                  return `Tool "${fnName}" executed (success=${Boolean(resObj.success)}):\n${resObj.summary || JSON.stringify(resObj)}`;
+                })
+                .join('\n\n');
+              effectiveContents = [
+                ...contents.filter((c: any) => c?.role === 'user' && c?.parts?.[0]?.text),
+                {
+                  role: 'user',
+                  parts: [
+                    {
+                      text: `[LIVE CRM DATABASE TOOL EXECUTION COMPLETED]\n${toolResultsText}\n\nPlease present this result clearly and accurately to the administrator in response to "${prompt}". Preserve all exact names, Registration IDs, phone numbers, courses, and fee amounts from the tool output above.`,
+                    },
+                  ],
+                },
+              ];
+            }
 
             const response: any = await Promise.race([
               ai.models.generateContent({
                 model: candidate.model,
-                contents,
+                contents: effectiveContents,
                 config: requestConfig,
               }),
               new Promise((_, reject) =>
@@ -2664,7 +3006,7 @@ Available CRM Function Tools:
               }
             });
 
-            if (sdkFunctionCalls.length > 0) {
+            if (!isFollowUpTurn && sdkFunctionCalls.length > 0) {
               detectedFunctionCalls = sdkFunctionCalls;
               detectedModelContent = firstCand?.content || {
                 role: 'model',
@@ -2699,13 +3041,23 @@ Available CRM Function Tools:
         }
       }
 
+      // Safety net: if on Turn 1 the user issued an explicit CRM database command (add/update/delete/convert/duplicate/bulk)
+      // and the model returned text without emitting a functionCall, check our deterministic CRM intent parser
+      if (!isFollowUpTurn && detectedFunctionCalls.length === 0) {
+        const deterministicCheck = buildQuotaFallbackResult(prompt, ledgerSnapshot, false);
+        if (deterministicCheck.functionCalls && deterministicCheck.functionCalls.length > 0) {
+          detectedFunctionCalls = deterministicCheck.functionCalls;
+          detectedModelContent = deterministicCheck.modelContent;
+        }
+      }
+
       if (detectedFunctionCalls.length > 0) {
         res.json({
           text: finalText,
           functionCalls: detectedFunctionCalls,
           modelTurnContent: detectedModelContent,
           searchSources,
-          modelUsed,
+          modelUsed: modelUsed || 'gemini-4-hydrogen',
         });
         return;
       }
@@ -2839,7 +3191,7 @@ Keep responses concise, structured in Markdown (tables, code blocks, bullet poin
 
       for (const apiKey of candidateKeys) {
         const ai = getGenAIClient(apiKey);
-        for (const modelName of ['gemini-3.8-flash', 'gemini-3.1-flash-lite']) {
+        for (const modelName of ['gemini-4-hydrogen', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']) {
           if (isModelOnCooldown(modelName)) continue;
           try {
             const streamResp: any = await ai.models.generateContentStream({

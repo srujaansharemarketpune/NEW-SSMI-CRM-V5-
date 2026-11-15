@@ -15,7 +15,6 @@ import {
   getDeletedIds,
   markDeletedId,
   unmarkDeletedId,
-  mergeRemoteDeletedRegistry,
   recordCloudReadSuccess,
   recordRemoteSnapshotPulse,
   recordCloudWriteSuccess,
@@ -34,10 +33,7 @@ import {
   getDeterministicPaymentId,
   getDeterministicStaffId,
   getDeterministicCourseId,
-  getDeterministicExpenseId,
-  upsertCanonicalWorkspaceRecord,
-  deleteCanonicalWorkspaceRecord,
-  updateCanonicalWorkspaceSettings
+  getDeterministicExpenseId
 } from './firebase';
 
 export {
@@ -53,6 +49,7 @@ export {
 import {
   doc,
   setDoc,
+  deleteDoc,
   collection,
   getDocs,
   onSnapshot,
@@ -144,53 +141,29 @@ export function calculateStudentFeesStatus(student: Student): string {
 const LEGACY_SAMPLE_SHEET_URL =
   'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit';
 
+let memorySheetEndpointMode: 'default' | 'custom' = 'default';
+let memoryCustomSheetWebhookUrl = '';
+let memoryPendingSyncQueue: PendingSyncItem[] = [];
+let memoryBackupSnapshots: BackupSnapshotMeta[] = [];
+
 /**
  * Retrieve the active endpoint preset mode ('default' | 'custom')
  */
 export function getGoogleSheetEndpointMode(): 'default' | 'custom' {
-  if (typeof window === 'undefined') return 'default';
-  try {
-    const savedMode = localStorage.getItem(STORAGE_KEYS.GSHEET_ENDPOINT_MODE);
-    if (savedMode === 'custom' || savedMode === 'default') {
-      return savedMode;
-    }
-    const existingUrl = (
-      localStorage.getItem('ssm_sheets_webhook_url') ||
-      localStorage.getItem(STORAGE_KEYS.GSHEET_WEBHOOK_URL) ||
-      ''
-    ).trim();
-    if (
-      existingUrl &&
-      existingUrl !== DEFAULT_APPS_SCRIPT_EXEC_URL &&
-      existingUrl !== LEGACY_SAMPLE_SHEET_URL
-    ) {
-      return 'custom';
-    }
-    return 'default';
-  } catch {
-    return 'default';
-  }
+  return memorySheetEndpointMode;
 }
 
 /**
  * Retrieve any stored custom endpoint URL (or empty string if none)
  */
 export function getCustomGoogleSheetWebhookUrl(): string {
-  if (typeof window === 'undefined') return '';
-  try {
-    const custom = (
-      localStorage.getItem(STORAGE_KEYS.GSHEET_CUSTOM_URL) ||
-      localStorage.getItem('ssm_sheets_webhook_url') ||
-      localStorage.getItem(STORAGE_KEYS.GSHEET_WEBHOOK_URL) ||
-      ''
-    ).trim();
-    if (custom === DEFAULT_APPS_SCRIPT_EXEC_URL || custom === LEGACY_SAMPLE_SHEET_URL) {
-      return '';
-    }
-    return custom;
-  } catch {
+  if (
+    memoryCustomSheetWebhookUrl === DEFAULT_APPS_SCRIPT_EXEC_URL ||
+    memoryCustomSheetWebhookUrl === LEGACY_SAMPLE_SHEET_URL
+  ) {
     return '';
   }
+  return memoryCustomSheetWebhookUrl;
 }
 
 /**
@@ -198,29 +171,17 @@ export function getCustomGoogleSheetWebhookUrl(): string {
  * Always defaults to `DEFAULT_APPS_SCRIPT_EXEC_URL` when no custom endpoint is specified.
  */
 export function getGoogleSheetWebhookUrl(): string {
-  if (typeof window === 'undefined') return DEFAULT_APPS_SCRIPT_EXEC_URL;
-  try {
-    const mode = getGoogleSheetEndpointMode();
-    if (mode === 'default') {
-      return DEFAULT_APPS_SCRIPT_EXEC_URL;
-    }
-    const stored = (
-      localStorage.getItem(STORAGE_KEYS.GSHEET_CUSTOM_URL) ||
-      localStorage.getItem('ssm_sheets_webhook_url') ||
-      localStorage.getItem(STORAGE_KEYS.GSHEET_WEBHOOK_URL) ||
-      ''
-    ).trim();
-    if (!stored || stored === LEGACY_SAMPLE_SHEET_URL) {
-      return DEFAULT_APPS_SCRIPT_EXEC_URL;
-    }
-    return stored;
-  } catch {
+  if (memorySheetEndpointMode === 'default') {
     return DEFAULT_APPS_SCRIPT_EXEC_URL;
   }
+  if (!memoryCustomSheetWebhookUrl || memoryCustomSheetWebhookUrl === LEGACY_SAMPLE_SHEET_URL) {
+    return DEFAULT_APPS_SCRIPT_EXEC_URL;
+  }
+  return memoryCustomSheetWebhookUrl;
 }
 
 /**
- * Persist the selected Apps Script endpoint & mode to localStorage and Firestore settings
+ * Persist the selected Apps Script endpoint & mode to Firestore settings
  */
 export function saveGoogleSheetWebhookUrl(
   url: string,
@@ -233,41 +194,29 @@ export function saveGoogleSheetWebhookUrl(
   const activeUrl =
     resolvedMode === 'default' || !trimmed ? DEFAULT_APPS_SCRIPT_EXEC_URL : trimmed;
 
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.setItem(STORAGE_KEYS.GSHEET_ENDPOINT_MODE, resolvedMode);
-      localStorage.setItem('ssm_sheets_webhook_url', activeUrl);
-      localStorage.setItem(STORAGE_KEYS.GSHEET_WEBHOOK_URL, activeUrl);
-      localStorage.setItem('ssm_sheets_connected_status', 'true');
-      if (resolvedMode === 'custom' && trimmed && trimmed !== DEFAULT_APPS_SCRIPT_EXEC_URL) {
-        localStorage.setItem(STORAGE_KEYS.GSHEET_CUSTOM_URL, trimmed);
-      }
-
-      // Mirror in srujaan_system_settings_v2
-      const rawSettings = localStorage.getItem('srujaan_system_settings_v2');
-      if (rawSettings) {
-        const parsedSettings = JSON.parse(rawSettings);
-        if (parsedSettings && typeof parsedSettings === 'object') {
-          parsedSettings.appsScriptWebhookUrl = activeUrl;
-          parsedSettings.appsScriptEndpointMode = resolvedMode;
-          parsedSettings.appsScriptLibraryId = DEFAULT_APPS_SCRIPT_LIBRARY_ID;
-          parsedSettings.appsScriptLibraryUrl = DEFAULT_APPS_SCRIPT_LIBRARY_URL;
-          localStorage.setItem('srujaan_system_settings_v2', JSON.stringify(parsedSettings));
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to save Google Sheet Webhook URL:', err);
-    }
+  memorySheetEndpointMode = resolvedMode;
+  if (resolvedMode === 'custom' && trimmed && trimmed !== DEFAULT_APPS_SCRIPT_EXEC_URL) {
+    memoryCustomSheetWebhookUrl = trimmed;
   }
 
-  // Persist integration settings in the same canonical workspace used by every device.
+  // Persist asynchronously to Firestore settings if user is authorized
   if (isAuthorizedUser(auth.currentUser)) {
-    void updateCanonicalWorkspaceSettings({
-      appsScriptWebhookUrl: activeUrl,
-      appsScriptEndpointMode: resolvedMode,
-      appsScriptLibraryId: DEFAULT_APPS_SCRIPT_LIBRARY_ID,
-      appsScriptLibraryUrl: DEFAULT_APPS_SCRIPT_LIBRARY_URL,
-      updatedAt: new Date().toISOString()
+    Promise.resolve().then(async () => {
+      try {
+        const settingsPayload = {
+          appsScriptWebhookUrl: activeUrl,
+          appsScriptEndpointMode: resolvedMode,
+          appsScriptLibraryId: DEFAULT_APPS_SCRIPT_LIBRARY_ID,
+          appsScriptLibraryUrl: DEFAULT_APPS_SCRIPT_LIBRARY_URL,
+          updatedAt: serverTimestamp()
+        };
+        await Promise.all([
+          setDoc(getDocRef('settings', 'institute_profile'), settingsPayload, { merge: true }),
+          setDoc(doc(db, 'settings', 'institute_profile'), settingsPayload, { merge: true })
+        ]);
+      } catch {
+        // non-blocking
+      }
     });
   }
 
@@ -278,17 +227,8 @@ export function saveGoogleSheetWebhookUrl(
  * Reset the Google Apps Script Web App endpoint back to the Default Production Endpoint
  */
 export function resetGoogleSheetWebhookToDefault(): string {
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.removeItem(STORAGE_KEYS.GSHEET_CUSTOM_URL);
-      localStorage.setItem(STORAGE_KEYS.GSHEET_ENDPOINT_MODE, 'default');
-      localStorage.setItem('ssm_sheets_webhook_url', DEFAULT_APPS_SCRIPT_EXEC_URL);
-      localStorage.setItem(STORAGE_KEYS.GSHEET_WEBHOOK_URL, DEFAULT_APPS_SCRIPT_EXEC_URL);
-      localStorage.setItem('ssm_sheets_connected_status', 'true');
-    } catch {
-      // ignore
-    }
-  }
+  memoryCustomSheetWebhookUrl = '';
+  memorySheetEndpointMode = 'default';
   return saveGoogleSheetWebhookUrl(DEFAULT_APPS_SCRIPT_EXEC_URL, 'default');
 }
 
@@ -417,49 +357,14 @@ export async function testGoogleSheetWebhookConnection(
 }
 
 /**
- * Tier 1: Synchronous 0ms Local Cache Operations
+ * Tier 1: Local Cache Operations Disabled — 100% Online Single Firestore Source of Truth
  */
 export function loadCachedStudents(): Student[] | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const tombstones = getDeletedIds('students');
-    const raw =
-      localStorage.getItem(STORAGE_KEYS.STUDENTS_CACHE) ||
-      localStorage.getItem(STORAGE_KEYS.CRM_STUDENTS);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.filter(
-          (s: any) => s && !s.isDeleted && !tombstones.has(String(s.id || ''))
-        );
-      }
-    }
-  } catch (err) {
-    console.warn('Error reading students cache from localStorage:', err);
-  }
   return null;
 }
 
-export function saveCachedStudents(students: Student[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const tombstones = getDeletedIds('students');
-    const activeStudents = (students || []).filter(
-      s => s && !(s as any).isDeleted && !tombstones.has(String(s.id || ''))
-    );
-    const compacted = activeStudents.map(s => ({
-      ...s,
-      photoUrl: typeof (s as any).photoUrl === 'string' && (s as any).photoUrl.startsWith('data:') ? '' : (s as any).photoUrl,
-    }));
-    const payload = JSON.stringify(compacted);
-    if (payload.length <= 400_000) {
-      localStorage.setItem(STORAGE_KEYS.STUDENTS_CACHE, payload);
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.STUDENTS_CACHE);
-    }
-  } catch (err) {
-    console.warn('Error saving students cache to localStorage:', err);
-  }
+export function saveCachedStudents(_students: Student[]): void {
+  // No-op: 100% Online Cloud Firestore is the single permanent source of truth
 }
 
 /**
@@ -554,17 +459,6 @@ export async function syncAndFetchGoogleWorkspace(
 }> {
   const appsScriptUrl = (getGoogleSheetWebhookUrl() || DEFAULT_APPS_SCRIPT_EXEC_URL).trim();
 
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.setItem('ssm_sheets_connected_status', 'true');
-      if (!localStorage.getItem(STORAGE_KEYS.GSHEET_WEBHOOK_URL)) {
-        localStorage.setItem(STORAGE_KEYS.GSHEET_WEBHOOK_URL, appsScriptUrl);
-      }
-    } catch {
-      // ignore
-    }
-  }
-
   let fetchedRecords: any = null;
 
   // Step 1: Attempt fast fetch_all_records ping in case CORS JSON is returned by the deployment
@@ -635,30 +529,18 @@ export async function syncAndFetchGoogleWorkspace(
 }
 
 /**
- * Queue failed or offline sync items for later reconciliation
+ * Queue failed or offline sync items in memory for later reconciliation
  */
 export function queuePendingSyncItem(item: PendingSyncItem): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.PENDING_SYNC_QUEUE);
-    const queue: PendingSyncItem[] = raw ? JSON.parse(raw) : [];
-    // Keep max 100 items
-    const filtered = queue.filter(q => q.studentId !== item.studentId || q.action !== item.action);
-    filtered.unshift(item);
-    localStorage.setItem(STORAGE_KEYS.PENDING_SYNC_QUEUE, JSON.stringify(filtered.slice(0, 100)));
-  } catch (err) {
-    console.warn('Failed to queue pending sync item:', err);
-  }
+  const filtered = memoryPendingSyncQueue.filter(
+    q => q.studentId !== item.studentId || q.action !== item.action
+  );
+  filtered.unshift(item);
+  memoryPendingSyncQueue = filtered.slice(0, 100);
 }
 
 export function getPendingSyncQueue(): PendingSyncItem[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.PENDING_SYNC_QUEUE);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return [...memoryPendingSyncQueue];
 }
 
 export async function flushPendingSyncQueue(): Promise<number> {
@@ -682,29 +564,169 @@ export async function flushPendingSyncQueue(): Promise<number> {
     }
   }
 
-  try {
-    localStorage.setItem(STORAGE_KEYS.PENDING_SYNC_QUEUE, JSON.stringify(remaining));
-  } catch {
-    // ignore
-  }
+  memoryPendingSyncQueue = remaining;
   return successful;
 }
 
 /**
- * Tier 2: Firebase Firestore Student Mutations (Shared Path: `institutes/srujaan_share_market_pune/students`)
+ * Tier 2: Firebase Firestore Student Mutations (Permanent Path: `institutes/ssmi_master_db/admissions` & `fees`)
  */
 export async function saveStudentToFirestore(student: Student): Promise<boolean> {
-  // The canonical workspace snapshot is the only database. App state autosave also
-  // writes the full snapshot; this mutation makes standalone student actions realtime.
-  return upsertCanonicalWorkspaceRecord('students', student as any, 'id');
+  unmarkDeletedId('students', student.id);
+  if (!(await ensureAuthorizedSession())) {
+    return false;
+  }
+  try {
+    const nowIso = (student as any).updatedAt || new Date().toISOString();
+    const safeId = String(student.id).trim();
+    const sharedRef = getDocRef('students', safeId);
+    const sharedAdmRef = getDocRef('admissions', safeId);
+    const sharedFeeRef = getDocRef('fees', safeId);
+    const legacyRef = getLegacyDocRef('students', safeId);
+    const topLevelRef = doc(db, 'students', safeId);
+    const topLevelAdmRef = doc(db, 'admissions', safeId);
+    const paidFees = Array.isArray(student.milestones)
+      ? student.milestones.filter(m => m.status === 'Paid').reduce((acc, m) => acc + (Number(m.amount) || 0), 0)
+      : Number((student as any).paidFees ?? (student as any).feesPaid ?? 0);
+    const totalFees = Number(student.netFee || student.grossFee || 0);
+    const pendingFees = Math.max(0, totalFees - paidFees);
+    const firestoreData = {
+      id: safeId.slice(0, 128),
+      regId: String(student.regId || '').slice(0, 64),
+      name: String(student.name || '').slice(0, 128),
+      phone: String(student.phone || '').slice(0, 32),
+      whatsapp: String(student.whatsapp || '').slice(0, 32),
+      email: String(student.email || '').slice(0, 128),
+      address: String(student.address || '').slice(0, 256),
+      course: String(student.course || '').slice(0, 128),
+      batch: String(student.batch || '').slice(0, 64),
+      status: student.status || 'Active',
+      source: String(student.source || 'Direct').slice(0, 64),
+      netFee: totalFees,
+      grossFee: Number(student.grossFee) || totalFees,
+      discount: Number(student.discount) || 0,
+      totalFees,
+      feesPaid: paidFees,
+      pendingFees,
+      enrollDate: String(student.enrollDate || '').slice(0, 32),
+      joinDate: String(student.joinDate || student.enrollDate || '').slice(0, 32),
+      docs: String(student.docs || '').slice(0, 256),
+      notes: String(student.notes || '').slice(0, 500),
+      milestones: Array.isArray(student.milestones) ? student.milestones : [],
+      isDeleted: false,
+      syncStatus: 'synced',
+      workspaceId: SHARED_INSTITUTE_ROOT_ID,
+      updatedAt: nowIso,
+      serverUpdatedAt: serverTimestamp()
+    };
+    const feeData = {
+      id: safeId.slice(0, 128),
+      regId: String(student.regId || '').slice(0, 64),
+      studentName: String(student.name || '').slice(0, 128),
+      course: String(student.course || '').slice(0, 128),
+      batchCode: String(student.batch || '').slice(0, 64),
+      netFee: totalFees,
+      paidAmount: paidFees,
+      balanceAmount: pendingFees,
+      status: pendingFees <= 0 ? 'Paid' : paidFees > 0 ? 'Partial' : 'Pending',
+      milestones: Array.isArray(student.milestones) ? student.milestones : [],
+      workspaceId: SHARED_INSTITUTE_ROOT_ID,
+      updatedAt: nowIso,
+      serverUpdatedAt: serverTimestamp()
+    };
+    await Promise.all([
+      setDoc(sharedAdmRef, firestoreData, { merge: true }),
+      setDoc(sharedRef, firestoreData, { merge: true }),
+      setDoc(sharedFeeRef, feeData, { merge: true }),
+      setDoc(legacyRef, firestoreData, { merge: true }),
+      setDoc(topLevelRef, firestoreData, { merge: true }),
+      setDoc(topLevelAdmRef, firestoreData, { merge: true })
+    ]);
+    recordCloudWriteSuccess();
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/admissions/${student.id}`);
+    return false;
+  }
 }
 
+/**
+ * Tier 2: Firebase Firestore Lead Mutations (Permanent Path: `institutes/ssmi_master_db/leads`)
+ */
 export async function saveLeadToFirestore(lead: Lead): Promise<boolean> {
-  return upsertCanonicalWorkspaceRecord('leads', lead as any, 'id');
+  unmarkDeletedId('leads', lead.id);
+  if (!(await ensureAuthorizedSession())) {
+    return false;
+  }
+  try {
+    const nowIso = (lead as any).updatedAt || new Date().toISOString();
+    const safeId = String(lead.id).trim();
+    const sharedRef = getDocRef('leads', safeId);
+    const sharedInqRef = getDocRef('inquiries', safeId);
+    const legacyRef = getLegacyDocRef('leads', safeId);
+    const topLevelRef = doc(db, 'leads', safeId);
+    const topLevelInqRef = doc(db, 'inquiries', safeId);
+    const firestoreData = {
+      id: safeId.slice(0, 128),
+      name: String(lead.name || '').slice(0, 128),
+      phone: String(lead.phone || '').slice(0, 32),
+      email: String(lead.email || '').slice(0, 128),
+      locality: String(lead.locality || '').slice(0, 128),
+      course: String(lead.course || '').slice(0, 128),
+      source: String(lead.source || 'AI Assistant').slice(0, 64),
+      stage: String(lead.stage || 'New Enquiry').slice(0, 64),
+      intent: lead.intent || 'Hot',
+      enquiryDate: String(lead.enquiryDate || nowIso.split('T')[0]).slice(0, 32),
+      followUpDate: String(lead.followUpDate || '').slice(0, 32),
+      followUpTime: String(lead.followUpTime || '11:00 AM').slice(0, 32),
+      lastContact: String(lead.lastContact || nowIso.split('T')[0]).slice(0, 32),
+      mode: String(lead.mode || 'Offline Classroom').slice(0, 64),
+      staff: String(lead.staff || 'Prasad Sir').slice(0, 128),
+      objection: String(lead.objection || 'None').slice(0, 128),
+      notes: String(lead.notes || '').slice(0, 1000),
+      isDeleted: false,
+      syncStatus: 'synced',
+      workspaceId: SHARED_INSTITUTE_ROOT_ID,
+      updatedAt: nowIso,
+      serverUpdatedAt: serverTimestamp()
+    };
+    await Promise.all([
+      setDoc(sharedRef, firestoreData, { merge: true }),
+      setDoc(sharedInqRef, firestoreData, { merge: true }),
+      setDoc(legacyRef, firestoreData, { merge: true }),
+      setDoc(topLevelRef, firestoreData, { merge: true }),
+      setDoc(topLevelInqRef, firestoreData, { merge: true })
+    ]);
+    recordCloudWriteSuccess();
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/leads/${lead.id}`);
+    return false;
+  }
 }
 
 export async function deleteStudentFromFirestore(studentId: string): Promise<boolean> {
-  return deleteCanonicalWorkspaceRecord('students', studentId, 'id');
+  markDeletedId('students', studentId);
+  if (!(await ensureAuthorizedSession())) {
+    return false;
+  }
+  try {
+    const safeId = String(studentId).trim();
+    await Promise.allSettled([
+      deleteDoc(getDocRef('admissions', safeId)),
+      deleteDoc(getDocRef('students', safeId)),
+      deleteDoc(getDocRef('fees', safeId)),
+      deleteDoc(getLegacyDocRef('students', safeId)),
+      deleteDoc(getLegacyDocRef('admissions', safeId)),
+      deleteDoc(doc(db, 'students', safeId)),
+      deleteDoc(doc(db, 'admissions', safeId))
+    ]);
+    recordCloudWriteSuccess();
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/admissions/${studentId}`);
+    return false;
+  }
 }
 
 export async function fetchStudentsFromFirestore(): Promise<Student[]> {
@@ -724,81 +746,557 @@ export async function fetchStudentsFromFirestore(): Promise<Student[]> {
 }
 
 /**
- * Real-time listener for Firestore `institutes/srujaan_share_market_pune/students` + `students` collections.
- * Propagates soft-deletes (`isDeleted: true`, `deletedAt`) across devices and resolves conflicts by `updatedAt`.
+ * Real-time listener for Firestore `institutes/ssmi_master_db/admissions` + `institutes/ssmi_master_db/students`.
+ * Directly reflects live Firestore documents so adding, editing, or deleting on Mobile immediately updates Laptop within 1–2s.
  */
 export function subscribeToFirestoreStudents(
   onUpdate: (students: Student[]) => void,
   onError?: (err: any) => void
 ): () => void {
-  let cancelled = false;
-  let unsubscribe: (() => void) | null = null;
-  void ensureAuthorizedSession().then((authorized) => {
-    if (cancelled || !authorized || !auth.currentUser) return;
-    incrementActiveListenerCount(1);
-    unsubscribe = onSnapshot(
-      doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID),
-      (snapshot) => {
-        const data = snapshot.exists() ? snapshot.data() : {};
-        if (data.deletedRecords) mergeRemoteDeletedRegistry(data.deletedRecords);
-        const deleted = getDeletedIds('students');
-        const students = (Array.isArray(data.students) ? data.students : [])
-          .filter((student: any) => student && !student.isDeleted && !deleted.has(String(student.id || '')));
-        recordRemoteSnapshotPulse();
-        onUpdate(students as Student[]);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'institutes/' + SHARED_INSTITUTE_ROOT_ID);
-        onError?.(error);
+  let unsubAdmissions: (() => void) | null = null;
+  let unsubStudents: (() => void) | null = null;
+  let isCancelled = false;
+
+  let admissionsDocs: Student[] = [];
+  let studentsDocs: Student[] = [];
+
+  const parseSnapToStudents = (snapshot: any): Student[] => {
+    const list: Student[] = [];
+    snapshot.forEach((docSnap: any) => {
+      const data = docSnap.data();
+      const id = String(data?.id || docSnap.id || '').trim();
+      if (!data || !id) return;
+      if (data.isDeleted === true || data.deletedAt) {
+        markDeletedId('students', id);
+        return;
       }
-    );
-  }).catch((error) => onError?.(error));
+      const tombstones = getDeletedIds('students');
+      if (tombstones.has(id)) return;
+      const rec: Student = {
+        id,
+        regId: data.regId || id,
+        name: data.name || 'Unnamed Student',
+        phone: data.phone || '',
+        whatsapp: data.whatsapp || data.phone || '',
+        email: data.email || '',
+        address: data.address || '',
+        course: data.course || 'Complete Master Trader Blueprint',
+        batch: data.batch || '',
+        enrollDate: data.enrollDate || new Date().toISOString().split('T')[0],
+        joinDate: data.joinDate || data.enrollDate || new Date().toISOString().split('T')[0],
+        status: data.status || 'Active',
+        source: data.source || 'Direct',
+        grossFee: Number(data.grossFee) || Number(data.netFee) || 25000,
+        discount: Number(data.discount) || 0,
+        netFee: Number(data.netFee) || 25000,
+        docs: data.docs || '',
+        notes: data.notes || '',
+        milestones: Array.isArray(data.milestones) ? data.milestones : []
+      };
+      if (data.updatedAt) (rec as any).updatedAt = data.updatedAt;
+      if (data.serverUpdatedAt) (rec as any).serverUpdatedAt = data.serverUpdatedAt;
+      (rec as any).syncStatus = 'synced';
+      list.push(rec);
+    });
+    return list;
+  };
+
+  const emitMerged = () => {
+    recordRemoteSnapshotPulse();
+    const merged = mergeStudentsSafely(studentsDocs, admissionsDocs);
+    onUpdate(merged);
+  };
+
+  ensureAuthorizedSession().then((authorized) => {
+    if (isCancelled || !authorized || !auth.currentUser) return;
+
+    try {
+      const admissionsCol = getColRef('admissions');
+      const studentsCol = getColRef('students');
+      incrementActiveListenerCount(2);
+
+      unsubAdmissions = onSnapshot(
+        admissionsCol,
+        (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'removed') {
+              const id = String(change.doc.data()?.id || change.doc.id || '').trim();
+              if (id) markDeletedId('students', id);
+            }
+          });
+          admissionsDocs = parseSnapToStudents(snapshot);
+          emitMerged();
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/admissions`);
+          if (onError) onError(error);
+        }
+      );
+
+      unsubStudents = onSnapshot(
+        studentsCol,
+        (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'removed') {
+              const id = String(change.doc.data()?.id || change.doc.id || '').trim();
+              if (id) markDeletedId('students', id);
+            }
+          });
+          studentsDocs = parseSnapToStudents(snapshot);
+          emitMerged();
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/students`);
+          if (onError) onError(error);
+        }
+      );
+    } catch (err) {
+      console.warn('Could not establish Firestore students snapshot subscription:', err);
+    }
+  });
+
   return () => {
-    cancelled = true;
-    unsubscribe?.();
-    if (unsubscribe) incrementActiveListenerCount(-1);
+    isCancelled = true;
+    if (unsubAdmissions) {
+      incrementActiveListenerCount(-1);
+      unsubAdmissions();
+      unsubAdmissions = null;
+    }
+    if (unsubStudents) {
+      incrementActiveListenerCount(-1);
+      unsubStudents();
+      unsubStudents = null;
+    }
   };
 }
 
 /**
- * Real-time listener for Firestore `institutes/srujaan_share_market_pune/leads` + `leads` collections.
- * Propagates soft-deletes (`isDeleted: true`, `deletedAt`) across devices and resolves conflicts by `updatedAt`.
+ * Real-time listener for Firestore `institutes/ssmi_master_db/leads`.
+ * Directly reflects live Firestore documents so adding, editing, or deleting on Mobile immediately updates Laptop within 1–2s.
  */
 export function subscribeToFirestoreLeads(
   onUpdate: (leads: Lead[]) => void,
   onError?: (err: any) => void
 ): () => void {
-  let cancelled = false;
-  let unsubscribe: (() => void) | null = null;
-  void ensureAuthorizedSession().then((authorized) => {
-    if (cancelled || !authorized || !auth.currentUser) return;
-    incrementActiveListenerCount(1);
-    unsubscribe = onSnapshot(
-      doc(db, 'institutes', SHARED_INSTITUTE_ROOT_ID),
-      (snapshot) => {
-        const data = snapshot.exists() ? snapshot.data() : {};
-        if (data.deletedRecords) mergeRemoteDeletedRegistry(data.deletedRecords);
-        const deleted = getDeletedIds('leads');
-        const leads = (Array.isArray(data.leads) ? data.leads : [])
-          .filter((lead: any) => lead && !lead.isDeleted && !deleted.has(String(lead.id || '')));
-        recordRemoteSnapshotPulse();
-        onUpdate(leads as Lead[]);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'institutes/' + SHARED_INSTITUTE_ROOT_ID);
-        onError?.(error);
+  let unsubShared: (() => void) | null = null;
+  let isCancelled = false;
+
+  const parseSnapToLeads = (snapshot: any): Lead[] => {
+    const list: Lead[] = [];
+    snapshot.forEach((docSnap: any) => {
+      const data = docSnap.data();
+      const id = String(data?.id || docSnap.id || '').trim();
+      if (!data || !id) return;
+      if (data.isDeleted === true || data.deletedAt) {
+        markDeletedId('leads', id);
+        return;
       }
-    );
-  }).catch((error) => onError?.(error));
+      const tombstones = getDeletedIds('leads');
+      if (tombstones.has(id)) return;
+      const rec: Lead = {
+        id,
+        name: data.name || 'Unnamed Prospect',
+        phone: data.phone || '',
+        email: data.email || '',
+        locality: data.locality || '',
+        course: data.course || 'Complete Master Trader Blueprint',
+        source: data.source || 'Direct',
+        stage: data.stage || 'New Enquiry',
+        intent: data.intent || 'Hot',
+        enquiryDate: data.enquiryDate || new Date().toISOString().split('T')[0],
+        followUpDate: data.followUpDate || '',
+        followUpTime: data.followUpTime || '11:00 AM',
+        lastContact: data.lastContact || new Date().toISOString().split('T')[0],
+        mode: data.mode || 'Offline Classroom',
+        staff: data.staff || 'Prasad Sir',
+        objection: data.objection || 'None',
+        notes: data.notes || ''
+      };
+      if (data.updatedAt) (rec as any).updatedAt = data.updatedAt;
+      if (data.serverUpdatedAt) (rec as any).serverUpdatedAt = data.serverUpdatedAt;
+      (rec as any).syncStatus = 'synced';
+      list.push(rec);
+    });
+    return list;
+  };
+
+  ensureAuthorizedSession().then((authorized) => {
+    if (isCancelled || !authorized || !auth.currentUser) return;
+
+    try {
+      const sharedCol = getColRef('leads');
+      incrementActiveListenerCount(1);
+
+      unsubShared = onSnapshot(
+        sharedCol,
+        (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'removed') {
+              const id = String(change.doc.data()?.id || change.doc.id || '').trim();
+              if (id) markDeletedId('leads', id);
+            }
+          });
+          const sharedDocs = parseSnapToLeads(snapshot);
+          recordRemoteSnapshotPulse();
+          onUpdate(sharedDocs);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/leads`);
+          if (onError) onError(error);
+        }
+      );
+    } catch (err) {
+      console.warn('Could not establish Firestore leads snapshot subscription:', err);
+    }
+  });
+
   return () => {
-    cancelled = true;
-    unsubscribe?.();
-    if (unsubscribe) incrementActiveListenerCount(-1);
+    isCancelled = true;
+    if (unsubShared) {
+      incrementActiveListenerCount(-1);
+      unsubShared();
+      unsubShared = null;
+    }
+  };
+}
+
+export async function saveBatchToFirestore(batch: any): Promise<boolean> {
+  if (!batch || !batch.code) return false;
+  if (!(await ensureAuthorizedSession()) || !auth.currentUser) return false;
+  try {
+    const code = String(batch.code).trim();
+    const nowIso = new Date().toISOString();
+    await setDoc(
+      getDocRef('batches', code),
+      {
+        ...batch,
+        code,
+        isDeleted: false,
+        workspaceId: SHARED_INSTITUTE_ROOT_ID,
+        updatedAt: nowIso,
+        serverUpdatedAt: serverTimestamp()
+      },
+      { merge: true }
+    );
+    recordCloudWriteSuccess();
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `institutes/${SHARED_INSTITUTE_ROOT_ID}/batches/${batch.code}`);
+    return false;
+  }
+}
+
+/**
+ * Real-time listeners for `institutes/ssmi_master_db/{batches,courses,fees,settings}`
+ */
+export function subscribeToFirestoreBatches(
+  onUpdate: (batches: any[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  let unsub: (() => void) | null = null;
+  let isCancelled = false;
+
+  ensureAuthorizedSession().then((authorized) => {
+    if (isCancelled || !authorized || !auth.currentUser) return;
+    try {
+      incrementActiveListenerCount(1);
+      unsub = onSnapshot(
+        getColRef('batches'),
+        (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'removed') {
+              const code = String(change.doc.data()?.code || change.doc.id || '').trim();
+              if (code) markDeletedId('batches', code);
+            }
+          });
+          const tombstones = getDeletedIds('batches');
+          const list: any[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            const code = String(data?.code || docSnap.id || '').trim();
+            if (!data || !code || data.isDeleted || tombstones.has(code)) return;
+            list.push({ ...data, code });
+          });
+          recordRemoteSnapshotPulse();
+          onUpdate(list);
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/batches`);
+          if (onError) onError(err);
+        }
+      );
+    } catch (e) {
+      console.warn('Could not establish Firestore batches listener:', e);
+    }
+  });
+
+  return () => {
+    isCancelled = true;
+    if (unsub) {
+      incrementActiveListenerCount(-1);
+      unsub();
+      unsub = null;
+    }
+  };
+}
+
+export function subscribeToFirestoreCourses(
+  onUpdate: (courses: any[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  let unsub: (() => void) | null = null;
+  let isCancelled = false;
+
+  ensureAuthorizedSession().then((authorized) => {
+    if (isCancelled || !authorized || !auth.currentUser) return;
+    try {
+      incrementActiveListenerCount(1);
+      unsub = onSnapshot(
+        getColRef('courses'),
+        (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'removed') {
+              const id = String(change.doc.data()?.id || change.doc.id || '').trim();
+              if (id) markDeletedId('courses', id);
+            }
+          });
+          const tombstones = getDeletedIds('courses');
+          const list: any[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            const id = String(data?.id || docSnap.id || '').trim();
+            if (!data || !id || data.isDeleted || tombstones.has(id)) return;
+            list.push({ ...data, id });
+          });
+          recordRemoteSnapshotPulse();
+          onUpdate(list);
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/courses`);
+          if (onError) onError(err);
+        }
+      );
+    } catch (e) {
+      console.warn('Could not establish Firestore courses listener:', e);
+    }
+  });
+
+  return () => {
+    isCancelled = true;
+    if (unsub) {
+      incrementActiveListenerCount(-1);
+      unsub();
+      unsub = null;
+    }
+  };
+}
+
+export function subscribeToFirestoreFees(
+  onUpdate: (fees: any[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  let unsub: (() => void) | null = null;
+  let isCancelled = false;
+
+  ensureAuthorizedSession().then((authorized) => {
+    if (isCancelled || !authorized || !auth.currentUser) return;
+    try {
+      incrementActiveListenerCount(1);
+      unsub = onSnapshot(
+        getColRef('fees'),
+        (snapshot) => {
+          const list: any[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            const id = String(data?.id || docSnap.id || '').trim();
+            if (!data || !id || data.isDeleted) return;
+            list.push({ ...data, id });
+          });
+          recordRemoteSnapshotPulse();
+          onUpdate(list);
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/fees`);
+          if (onError) onError(err);
+        }
+      );
+    } catch (e) {
+      console.warn('Could not establish Firestore fees listener:', e);
+    }
+  });
+
+  return () => {
+    isCancelled = true;
+    if (unsub) {
+      incrementActiveListenerCount(-1);
+      unsub();
+      unsub = null;
+    }
+  };
+}
+
+export function subscribeToFirestoreSettings(
+  onUpdate: (settings: Record<string, any>) => void,
+  onError?: (err: any) => void
+): () => void {
+  let unsub: (() => void) | null = null;
+  let isCancelled = false;
+
+  ensureAuthorizedSession().then((authorized) => {
+    if (isCancelled || !authorized || !auth.currentUser) return;
+    try {
+      incrementActiveListenerCount(1);
+      unsub = onSnapshot(
+        getColRef('settings'),
+        (snapshot) => {
+          snapshot.forEach((docSnap) => {
+            if (docSnap.id === 'institute_profile' || snapshot.size === 1) {
+              const data = docSnap.data();
+              if (data && typeof data === 'object') {
+                recordRemoteSnapshotPulse();
+                onUpdate(data);
+              }
+            }
+          });
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, `institutes/${SHARED_INSTITUTE_ROOT_ID}/settings`);
+          if (onError) onError(err);
+        }
+      );
+    } catch (e) {
+      console.warn('Could not establish Firestore settings listener:', e);
+    }
+  });
+
+  return () => {
+    isCancelled = true;
+    if (unsub) {
+      incrementActiveListenerCount(-1);
+      unsub();
+      unsub = null;
+    }
   };
 }
 
 /**
- * Cloud Backup Snapshot Creator (Firestore collection `backups/` + unified `institutes/institute_master_data` + `students/`)
+ * One-Time Cloud Migration Helper ("Sync / Migrate Local Data to Cloud"):
+ * Pulls any legacy Firestore collections (`institutes/srujaan_share_market_pune/*`, `institutes/institute_master_data`, top-level `students`/`leads`)
+ * and current state into the permanent `institutes/ssmi_master_db/{admissions,leads,fees,batches,courses,settings}` collections.
+ */
+export async function migrateLocalAndLegacyDataToCloud(currentState: AppState): Promise<{
+  ok: boolean;
+  migratedStudents: number;
+  migratedLeads: number;
+  migratedBatches: number;
+  migratedCourses: number;
+  message: string;
+}> {
+  if (!(await ensureAuthorizedSession()) || !auth.currentUser) {
+    return {
+      ok: false,
+      migratedStudents: 0,
+      migratedLeads: 0,
+      migratedBatches: 0,
+      migratedCourses: 0,
+      message: 'Please sign in with an authorized Google account first.'
+    };
+  }
+  try {
+    const [legacyStudentsSnap, topStudentsSnap, legacyLeadsSnap, topLeadsSnap, masterSnap] = await Promise.all([
+      withTimeout(getDocs(getLegacyColRef('students')), 4000, null as any),
+      withTimeout(getDocs(collection(db, 'students')), 4000, null as any),
+      withTimeout(getDocs(getLegacyColRef('leads')), 4000, null as any),
+      withTimeout(getDocs(collection(db, 'leads')), 4000, null as any),
+      fetchMasterSnapshotFromFirestore('institute_master_data')
+    ]);
+
+    const legacyStudents: Student[] = [];
+    const collectStudents = (snap: any) => {
+      if (!snap || snap.empty) return;
+      snap.forEach((d: any) => {
+        const raw = d.data();
+        if (raw && !raw.isDeleted) {
+          legacyStudents.push({ ...raw, id: String(raw.id || d.id) } as Student);
+        }
+      });
+    };
+    collectStudents(legacyStudentsSnap);
+    collectStudents(topStudentsSnap);
+    if (Array.isArray(masterSnap?.students)) {
+      masterSnap.students.forEach((s: any) => {
+        if (s && !s.isDeleted) legacyStudents.push(s as Student);
+      });
+    }
+
+    const legacyLeads: Lead[] = [];
+    const collectLeads = (snap: any) => {
+      if (!snap || snap.empty) return;
+      snap.forEach((d: any) => {
+        const raw = d.data();
+        if (raw && !raw.isDeleted) {
+          legacyLeads.push({ ...raw, id: String(raw.id || d.id) } as Lead);
+        }
+      });
+    };
+    collectLeads(legacyLeadsSnap);
+    collectLeads(topLeadsSnap);
+    if (Array.isArray(masterSnap?.leads)) {
+      masterSnap.leads.forEach((l: any) => {
+        if (l && !l.isDeleted) legacyLeads.push(l as Lead);
+      });
+    }
+
+    const allStudents = mergeStudentsSafely(currentState.students || [], legacyStudents);
+    const allLeads = mergeRecordsByKeySafely(currentState.leads || [], legacyLeads, 'id', 'leads');
+    const allBatches = currentState.batches || [];
+    const allCourses = currentState.courses || [];
+
+    for (const s of allStudents) {
+      await saveStudentToFirestore(s);
+    }
+    for (const l of allLeads) {
+      await saveLeadToFirestore(l);
+    }
+    for (const b of allBatches) {
+      const code = String(b.code || '').trim();
+      if (code) {
+        await setDoc(getDocRef('batches', code), { ...b, code, isDeleted: false, workspaceId: SHARED_INSTITUTE_ROOT_ID, updatedAt: new Date().toISOString() }, { merge: true });
+      }
+    }
+    for (const c of allCourses) {
+      const id = String(c.id || '').trim();
+      if (id) {
+        await setDoc(getDocRef('courses', id), { ...c, id, isDeleted: false, workspaceId: SHARED_INSTITUTE_ROOT_ID, updatedAt: new Date().toISOString() }, { merge: true });
+      }
+    }
+    if (currentState.settings) {
+      await setDoc(getDocRef('settings', 'institute_profile'), { ...currentState.settings, workspaceId: SHARED_INSTITUTE_ROOT_ID, updatedAt: new Date().toISOString() }, { merge: true });
+    }
+
+    recordCloudWriteSuccess();
+    return {
+      ok: true,
+      migratedStudents: allStudents.length,
+      migratedLeads: allLeads.length,
+      migratedBatches: allBatches.length,
+      migratedCourses: allCourses.length,
+      message: `Successfully migrated ${allStudents.length} admissions, ${allLeads.length} leads, ${allBatches.length} batches, and ${allCourses.length} courses to institutes/${SHARED_INSTITUTE_ROOT_ID}.`
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      migratedStudents: 0,
+      migratedLeads: 0,
+      migratedBatches: 0,
+      migratedCourses: 0,
+      message: err?.message || 'Cloud migration failed.'
+    };
+  }
+}
+
+/**
+ * Cloud Backup Snapshot Creator (Firestore collection `backups/` + unified `institutes/ssmi_master_db`)
  */
 export async function createFirestoreBackup(
   students: Student[],
@@ -807,15 +1305,11 @@ export async function createFirestoreBackup(
   const timestamp = new Date().toISOString();
   const dateFormatted = timestamp.replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
   const backupId = `backup_${dateFormatted}`;
-  const currentUser = auth.currentUser;
 
   const tombstones = getDeletedIds('students');
   const activeStudents = (students || []).filter(
     s => s && !(s as any).isDeleted && !tombstones.has(String(s.id || ''))
   );
-
-  // Sync local cache keys immediately
-  saveCachedStudents(activeStudents);
 
   const backupMeta: BackupSnapshotMeta = {
     id: backupId,
@@ -827,23 +1321,7 @@ export async function createFirestoreBackup(
     notes: notes.slice(0, 500)
   };
 
-  // 1. Save latest snapshot metadata locally (capped to 2 snapshots and <300KB to preserve localStorage quota)
-  if (typeof window !== 'undefined') {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.BACKUP_SNAPSHOTS);
-      const list: BackupSnapshotMeta[] = raw ? JSON.parse(raw) : [];
-      list.unshift(backupMeta);
-      const cappedJson = JSON.stringify(list.slice(0, 2));
-      if (cappedJson.length < 300_000) {
-        localStorage.setItem(STORAGE_KEYS.BACKUP_SNAPSHOTS, cappedJson);
-      } else {
-        localStorage.setItem(STORAGE_KEYS.BACKUP_SNAPSHOTS, JSON.stringify([backupMeta]));
-      }
-      localStorage.setItem(STORAGE_KEYS.LAST_BACKUP_TIME, timestamp);
-    } catch (e) {
-      console.warn('Failed to save backup snapshot to local cache:', e);
-    }
-  }
+  memoryBackupSnapshots = [backupMeta, ...memoryBackupSnapshots].slice(0, 2);
 
   // 2. Diff-sync Firestore `students/` + `institutes/institute_master_data` + `backups/{backupId}`
   if (await ensureAuthorizedSession()) {
@@ -952,37 +1430,17 @@ export async function fetchLatestFirestoreBackup(): Promise<{
     }
   }
 
-  // 2. Fallback to local cache backups
-  if (typeof window !== 'undefined') {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.BACKUP_SNAPSHOTS);
-      if (raw) {
-        const list: BackupSnapshotMeta[] = JSON.parse(raw);
-        if (Array.isArray(list) && list.length > 0) {
-          const latest = list[0];
-          const cleanLocal = filterClean(latest.students);
-          return {
-            backupId: latest.id,
-            timestamp: latest.createdAt,
-            studentCount: cleanLocal.length,
-            students: cleanLocal,
-            source: 'Local Cache'
-          };
-        }
-      }
-      const cached = loadCachedStudents();
-      if (cached && cached.length > 0) {
-        return {
-          backupId: 'local_cache',
-          timestamp: new Date().toISOString(),
-          studentCount: cached.length,
-          students: cached,
-          source: 'Local Cache'
-        };
-      }
-    } catch (e) {
-      console.warn('Failed reading local backup cache:', e);
-    }
+  // 2. Fallback to in-memory runtime snapshots only (no localStorage)
+  if (memoryBackupSnapshots.length > 0) {
+    const latest = memoryBackupSnapshots[0];
+    const cleanLocal = filterClean(latest.students);
+    return {
+      backupId: latest.id,
+      timestamp: latest.createdAt,
+      studentCount: cleanLocal.length,
+      students: cleanLocal,
+      source: 'Firestore'
+    };
   }
 
   return null;

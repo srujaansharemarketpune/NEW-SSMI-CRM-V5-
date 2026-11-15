@@ -379,6 +379,10 @@
       "schema": "PaymentRecord",
       "description": "Atomic fee payment records inside the shared workspace"
     },
+    "/institutes/{instituteId}/fees/{feeId}": {
+      "schema": "PaymentRecord",
+      "description": "Fee payment records inside the shared workspace (ssmi_master_db)"
+    },
     "/institutes/{instituteId}/audit_logs/{auditId}": {
       "schema": "AuditLog",
       "description": "CRM audit log entries inside the shared workspace"

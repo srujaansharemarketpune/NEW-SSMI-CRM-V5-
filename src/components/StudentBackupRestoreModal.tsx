@@ -96,12 +96,6 @@ export const StudentBackupRestoreModal: React.FC<StudentBackupRestoreModalProps>
       setEndpointMode(getGoogleSheetEndpointMode());
       setCustomWebhookUrl(getCustomGoogleSheetWebhookUrl());
       setWebhookUrl(getGoogleSheetWebhookUrl());
-      try {
-        const savedTime = localStorage.getItem(STORAGE_KEYS.LAST_BACKUP_TIME);
-        if (savedTime) setLastBackupTime(savedTime);
-      } catch {
-        // ignore
-      }
       loadCloudSnapshot();
     }
   }, [isOpen]);
@@ -461,8 +455,8 @@ export const StudentBackupRestoreModal: React.FC<StudentBackupRestoreModalProps>
               <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                 <div className="text-xs text-amber-900 leading-relaxed">
-                  <span className="font-bold block mb-0.5">Safe Re-hydration</span>
-                  Restoring data merges and re-hydrates state, updates <code className="bg-amber-100 text-amber-900 px-1 py-0.5 rounded font-mono">localStorage</code> immediately, and updates the student list reactively without requiring a manual browser refresh.
+                  <span className="font-bold block mb-0.5">Safe Cloud Re-hydration</span>
+                  Restoring data merges and re-hydrates state, updates Cloud Firestore immediately, and updates the student list reactively across all connected devices without requiring a manual browser refresh.
                 </div>
               </div>
 

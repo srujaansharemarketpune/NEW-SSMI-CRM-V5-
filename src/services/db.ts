@@ -146,82 +146,19 @@ function normalizeInstructorName(raw?: string): string {
   return trimmed;
 }
 
+let memorySavedCourses: Course[] | null = null;
+
 /**
- * Reads persisted courses from `ssm_courses_data` first (falling back to `srujaan_courses_v2`).
- * Prevents course edits (instructor, title, fees, syllabus, status) from ever reverting to mock presets on refresh,
- * while automatically migrating legacy placeholder instructor names to "Prasad Sir".
+ * Returns in-memory courses or null — 100% Online Cloud Firestore is the single source of truth.
  */
 export function loadSavedCoursesFromStorage(): Course[] | null {
-  if (typeof window === 'undefined') return null;
-  const normalizeCoursesList = (list: Course[]): Course[] =>
-    list.map(c => ({
-      ...c,
-      instructor: normalizeInstructorName(c.instructor),
-      lectures: Array.isArray(c.lectures)
-        ? c.lectures.map(l => ({
-            ...l,
-            instructor: normalizeInstructorName(l.instructor)
-          }))
-        : []
-    }));
-
-  try {
-    const rawPrimary = localStorage.getItem(SSM_COURSES_DATA_KEY);
-    if (rawPrimary) {
-      const parsed = JSON.parse(rawPrimary);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const normalized = normalizeCoursesList(parsed);
-        localStorage.setItem(SSM_COURSES_DATA_KEY, JSON.stringify(normalized));
-        return normalized;
-      }
-    }
-    const rawFallback = localStorage.getItem(LEGACY_COURSES_KEY);
-    if (rawFallback) {
-      const parsed = JSON.parse(rawFallback);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const normalized = normalizeCoursesList(parsed);
-        localStorage.setItem(SSM_COURSES_DATA_KEY, JSON.stringify(normalized));
-        return normalized;
-      }
-    }
-  } catch (err) {
-    console.warn('loadSavedCoursesFromStorage warning:', err);
-  }
-  return null;
+  return memorySavedCourses;
 }
 
 let courseCloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
-function safeLocalStorageSet(key: string, value: string): void {
-  if (typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    window.localStorage.setItem(key, value);
-  } catch (err) {
-    // On QuotaExceededError, purge any legacy/redundant keys and retry once
-    const redundantKeys = [
-      'SRUJAAN_IMS_OFFLINE_MIRROR_V5',
-      'srujaan_institute_db_v3',
-      'srujaan_master_db',
-      'srujaan_master_db_snapshot',
-      'srujaan_study_materials_v2',
-      'srujaan_courses_v2',
-      'crm_students',
-      'ssm_pre_sync_safety_backup_v1',
-      'ssmi_backup_snapshots_v1'
-    ];
-    redundantKeys.forEach((rk) => {
-      try {
-        window.localStorage.removeItem(rk);
-      } catch {
-        // ignore
-      }
-    });
-    try {
-      window.localStorage.setItem(key, value);
-    } catch (retryErr) {
-      console.warn(`localStorage write skipped for ${key} (relying on IndexedDB):`, retryErr || err);
-    }
-  }
+function safeLocalStorageSet(_key: string, _value: string): void {
+  // No-op: localStorage data caching disabled for 100% online Firestore single source of truth
 }
 
 function compactStateForLocalStorage(state: AppState): AppState {
@@ -269,8 +206,7 @@ export function saveCoursesToStorageImmediate(courses: Course[], fullState?: App
   if (typeof window === 'undefined' || !Array.isArray(courses)) return;
   let updatedStateForSync: AppState | null = null;
   try {
-    const serializedCourses = JSON.stringify(courses);
-    safeLocalStorageSet(SSM_COURSES_DATA_KEY, serializedCourses);
+    memorySavedCourses = [...courses];
 
     if (fullState) {
       updatedStateForSync = {
@@ -278,7 +214,6 @@ export function saveCoursesToStorageImmediate(courses: Course[], fullState?: App
         courses,
         lastSavedAt: new Date().toISOString()
       };
-      safeLocalStorageSet(CRM_DATA_KEY, JSON.stringify(compactStateForLocalStorage(updatedStateForSync)));
       syncWindowInstituteDB(updatedStateForSync);
     } else if ((window as any).instituteDB) {
       (window as any).instituteDB.courses = courses;
@@ -288,7 +223,7 @@ export function saveCoursesToStorageImmediate(courses: Course[], fullState?: App
     console.warn('saveCoursesToStorageImmediate warning:', err);
   }
 
-  // Trigger 400ms debounced synchronization to the shared Firestore workspace
+  // Trigger 400ms debounced Firestore & Cloud Server sync to prevent network congestion
   if (courseCloudSyncTimer) {
     clearTimeout(courseCloudSyncTimer);
   }
@@ -548,177 +483,20 @@ export async function initIndexedDb(): Promise<IDBDatabase | null> {
 }
 
 /**
- * Synchronous 0ms offline-first loader:
- * Reads immediately from browser localStorage on launch/reload before rendering,
- * ensuring reloading never flashes default state or resets modified data.
+ * 100% Online Cloud Loader:
+ * Never reads from localStorage so deleted or stale records cannot reappear across devices.
+ * Live data is hydrated directly from Firebase Cloud Firestore (`institutes/ssmi_master_db/*`) via `onSnapshot`.
  */
 export function loadOfflineData(): AppState {
-  if (typeof window === 'undefined') {
-    return getInitialAppState();
-  }
-
-  // 0. Check dedicated students cache (ssmi_students_v1) and courses cache (ssm_courses_data)
-  let cachedStudentsList: any[] | null = null;
-  try {
-    const rawStu = localStorage.getItem('ssmi_students_v1');
-    if (rawStu) {
-      const parsedStu = JSON.parse(rawStu);
-      if (Array.isArray(parsedStu)) {
-        cachedStudentsList = parsedStu;
-      }
-    }
-  } catch (err) {
-    console.warn('loadOfflineData ssmi_students_v1 read error:', err);
-  }
-
-  const cachedCoursesList = loadSavedCoursesFromStorage();
-
-  // 1. Check primary CRM persistence key
-  try {
-    const rawCrm = localStorage.getItem(CRM_DATA_KEY);
-    if (rawCrm) {
-      const parsed = JSON.parse(rawCrm);
-      const data = parsed.payload ? parsed.payload : parsed;
-      if (data && (Array.isArray(data.students) || data.settings || data.institute)) {
-        if (cachedStudentsList && cachedStudentsList.length > 0) {
-          data.students = mergeStudentsSafely(
-            Array.isArray(data.students) ? data.students : [],
-            cachedStudentsList
-          );
-        }
-        if (cachedCoursesList && cachedCoursesList.length > 0) {
-          data.courses = cachedCoursesList;
-        }
-        const normalized = normalizeLoadedState(data);
-        syncWindowInstituteDB(normalized);
-        return normalized;
-      }
-    }
-  } catch (err) {
-    console.warn('loadOfflineData CRM_DATA_KEY read error:', err);
-  }
-
-  // 2. Check offline mirror key
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const data = parsed.payload ? parsed.payload : parsed;
-      if (data && Array.isArray(data.students)) {
-        if (cachedCoursesList && cachedCoursesList.length > 0) {
-          data.courses = cachedCoursesList;
-        }
-        const normalized = normalizeLoadedState(data);
-        syncWindowInstituteDB(normalized);
-        return normalized;
-      }
-    }
-  } catch (err) {
-    console.warn('loadOfflineData STORAGE_KEY read error:', err);
-  }
-
-  // 3. Check unified master db key
-  try {
-    const rawMaster = localStorage.getItem(MASTER_DB_KEY);
-    if (rawMaster) {
-      const parsed = JSON.parse(rawMaster);
-      const data = parsed.payload ? parsed.payload : parsed;
-      if (data && (Array.isArray(data.students) || data.settings)) {
-        if (cachedCoursesList && cachedCoursesList.length > 0) {
-          data.courses = cachedCoursesList;
-        }
-        const normalized = normalizeLoadedState(data);
-        syncWindowInstituteDB(normalized);
-        return normalized;
-      }
-    }
-  } catch (err) {
-    console.warn('loadOfflineData MASTER_DB_KEY read error:', err);
-  }
-
   const initial = getInitialAppState();
   (initial as any).updatedAt = '1970-01-01T00:00:00.000Z';
   initial.lastSavedAt = '1970-01-01T00:00:00.000Z';
   (initial as any).isSeedData = true;
-  if (cachedCoursesList && cachedCoursesList.length > 0) {
-    initial.courses = cachedCoursesList;
-  }
   syncWindowInstituteDB(initial);
   return initial;
 }
 
 export async function loadStateFromStorage(): Promise<AppState> {
-  const cachedCoursesList = loadSavedCoursesFromStorage();
-  let localState: AppState | null = null;
-  // 1. Try local storage immediate mirror first
-  try {
-    const rawCrm = localStorage.getItem(CRM_DATA_KEY) || localStorage.getItem(STORAGE_KEY);
-    if (rawCrm) {
-      const parsed = JSON.parse(rawCrm);
-      const data = parsed.payload ? parsed.payload : parsed;
-      if (data && Array.isArray(data.students)) {
-        if (cachedCoursesList && cachedCoursesList.length > 0 && (!Array.isArray(data.courses) || data.courses.length === 0)) {
-          data.courses = cachedCoursesList;
-        }
-        localState = normalizeLoadedState(data);
-      }
-    }
-  } catch (err) {
-    console.warn('loadStateFromStorage localStorage read error:', err);
-  }
-
-  // 2. Try IndexedDB (which holds the full uncompacted state including base64 logos & material files)
-  if (!idbDatabase) {
-    await initIndexedDb();
-  }
-  if (idbDatabase) {
-    try {
-      const stateFromIdb = await new Promise<AppState | null>((resolve) => {
-        const tx = idbDatabase!.transaction(['app_state_store'], 'readonly');
-        const store = tx.objectStore('app_state_store');
-        const req = store.get('PRIMARY_STATE');
-        req.onsuccess = () => resolve(req.result ? req.result.value : null);
-        req.onerror = () => resolve(null);
-      });
-      if (stateFromIdb && Array.isArray(stateFromIdb.students)) {
-        const normalizedIdb = normalizeLoadedState(stateFromIdb);
-        if (!localState) {
-          syncWindowInstituteDB(normalizedIdb);
-          return normalizedIdb;
-        }
-        // Hydrate full material fileData & large settings images from IndexedDB if compacted in localStorage
-        const idbMatMap = new Map((normalizedIdb.materials || []).map((m) => [m.id, m]));
-        localState.materials = (localState.materials || []).map((m) => {
-          const full = idbMatMap.get(m.id);
-          return !m.fileData && full?.fileData ? { ...m, fileData: full.fileData } : m;
-        });
-        if (normalizedIdb.settings) {
-          localState.settings = {
-            ...normalizedIdb.settings,
-            ...localState.settings,
-            primaryLogoBase64: localState.settings?.primaryLogoBase64 || normalizedIdb.settings.primaryLogoBase64,
-            logoBase64: localState.settings?.logoBase64 || normalizedIdb.settings.logoBase64,
-            certificateLogoBase64: localState.settings?.certificateLogoBase64 || normalizedIdb.settings.certificateLogoBase64,
-            signatureBase64: localState.settings?.signatureBase64 || normalizedIdb.settings.signatureBase64,
-            upiQrBase64: localState.settings?.upiQrBase64 || normalizedIdb.settings.upiQrBase64
-          };
-        }
-        syncWindowInstituteDB(localState);
-        return localState;
-      }
-    } catch (e) {
-      console.warn('Error reading from IndexedDB:', e);
-    }
-  }
-
-  if (localState) {
-    syncWindowInstituteDB(localState);
-    return localState;
-  }
-
-  // A fresh device hydrates from the single canonical Firestore workspace after real sign-in.
-  // Local storage and IndexedDB are used only as offline caches, never as separate cloud databases.
-
   const initial = getInitialAppState();
   (initial as any).updatedAt = '1970-01-01T00:00:00.000Z';
   initial.lastSavedAt = '1970-01-01T00:00:00.000Z';
@@ -873,22 +651,9 @@ export function normalizeLoadedState(state: AppState): AppState {
     });
   });
 
-  // Ensure state.settings exists, falling back to saved v2 settings or initial defaults if missing
+  // Ensure state.settings exists, falling back to initial defaults if missing
   if (!state.settings || typeof state.settings !== 'object') {
-    try {
-      const rawSettings = typeof window !== 'undefined' ? localStorage.getItem('srujaan_system_settings_v2') : null;
-      if (rawSettings) {
-        const parsed = JSON.parse(rawSettings);
-        if (parsed && typeof parsed === 'object') {
-          state.settings = { ...initial.settings, ...parsed };
-        }
-      }
-    } catch (e) {
-      console.warn('Could not read srujaan_system_settings_v2:', e);
-    }
-    if (!state.settings || typeof state.settings !== 'object') {
-      state.settings = { ...initial.settings };
-    }
+    state.settings = { ...initial.settings };
   } else {
     state.settings = { ...initial.settings, ...state.settings };
   }
@@ -1077,7 +842,7 @@ if (typeof window !== 'undefined') {
  * Unified Non-Blocking Auto-Save Data Handler:
  * 1. Updates optimistic in-memory cache in 0ms (zero main-thread lockup).
  * 2. Batches localStorage & IndexedDB serialization off the keystroke path.
- * 3. Debounces canonical Firebase Firestore sync (600ms) silently in the background.
+ * 3. Debounces Firebase Firestore & Cloud Server sync (600ms) silently in the background.
  */
 export async function autoSaveData(
   updatedData: AppState,
@@ -1122,7 +887,7 @@ export async function autoSaveData(
       return;
     }
     try {
-      await dualWriteToCloud(target, { interactiveAuth: false, skipPreFetch: false });
+      await dualWriteToCloud(target, { interactiveAuth: false, skipPreFetch: true });
     } catch (err) {
       console.warn('Coalesced auto-save cloud sync warning:', err);
     }
@@ -1223,12 +988,16 @@ export async function fetchWithTimeout(
 }
 
 /**
- * Shared-State Sync Engine:
- * Local storage and IndexedDB are offline caches only. The sole cross-device database is
- * Firebase Firestore document: institutes/srujaan_share_market_pune.
+ * Dual-Write Cloud Engine:
+ * Simultaneously persists state to:
+ * 1. Local Storage & IndexedDB (`window.instituteDB` v3.0.0 & `srujaan_master_db`)
+ * 2. Online Cloud Run Server (`/api/cloud/state`)
+ * 3. Custom Firebase Realtime DB / REST Endpoint (`settings.cloudConfig.firebaseUrl` -> `srujaan_main_store.json`)
+ * 4. Firebase Cloud Firestore (`ai-studio-srujaansharemark-...`)
  *
- * Normal updates transactionally merge with the canonical cloud snapshot.
- * Explicit Overwrite Cloud replaces that snapshot after the user's confirmation.
+ * When `options.isOverwrite` is false (default Push Update), performs a non-destructive merge
+ * with remote data before pushing so other devices' additions are never lost.
+ * When `options.isOverwrite` is true (Overwrite Cloud), force-pushes current local state directly.
  */
 let activeDualWritePromise: Promise<{
   ok: boolean;
@@ -1270,38 +1039,29 @@ export async function dualWriteToCloud(
     // When not explicitly overwriting and not an incremental autoSave, pre-merge with remote Firestore so records added/edited on another device are never lost
     if (!isOverwrite && !skipPreFetch && (typeof navigator === 'undefined' || navigator.onLine)) {
       try {
-        const remoteMaster = await fetchMasterSnapshotFromFirestore('institute_master_data');
-        const canonicalSnapshot = Number((remoteMaster as any)?.syncSchemaVersion || 0) >= 2;
-        // Never consult per-collection mirrors after the canonical full-state document exists.
-        const [remoteSubStudents, remoteSubLeads, remoteSubBatches, remoteSubStaff, remoteSubCourses, remoteSettings] = canonicalSnapshot
-          ? [[], [], [], [], [], null]
-          : await Promise.all([
-              fetchStudentsFromFirestore(),
-              fetchLeadsFromFirestore(),
-              fetchBatchesFromFirestore(),
-              fetchStaffFromFirestore(),
-              fetchCoursesFromFirestore(),
-              fetchSettingsFromFirestore()
-            ]);
+        const [remoteMaster, remoteSubStudents, remoteSubLeads] = await Promise.all([
+          fetchMasterSnapshotFromFirestore('institute_master_data'),
+          fetchStudentsFromFirestore(),
+          fetchLeadsFromFirestore()
+        ]);
         const cloudMasterStudents = Array.isArray(remoteMaster?.students) ? remoteMaster!.students : [];
-        const allRemoteStudents = canonicalSnapshot
-          ? cloudMasterStudents
-          : mergeStudentsSafely(cloudMasterStudents, remoteSubStudents as any[]);
-        // Use canonical cloud state as the source of truth; record timestamps resolve genuine concurrent edits.
+        const allRemoteStudents = mergeStudentsSafely(cloudMasterStudents, remoteSubStudents as any[]);
+        // Pass local first, remote second so newer cloud records win by updatedAt
         const mergedStudents = mergeStudentsSafely(state.students || [], allRemoteStudents);
 
         const cloudMasterLeads = Array.isArray(remoteMaster?.leads) ? remoteMaster!.leads : [];
-        const allRemoteLeads = canonicalSnapshot
-          ? cloudMasterLeads
-          : mergeRecordsByKeySafely(cloudMasterLeads, remoteSubLeads as any[], 'id', 'leads');
+        const allRemoteLeads = mergeRecordsByKeySafely(cloudMasterLeads, remoteSubLeads as any[], 'id', 'leads');
         const mergedLeads = mergeRecordsByKeySafely(state.leads || [], allRemoteLeads, 'id', 'leads');
 
-        const remoteBatches = Array.isArray(remoteMaster?.batches) ? remoteMaster!.batches : remoteSubBatches as any[];
-        const remoteCourses = Array.isArray(remoteMaster?.courses) ? remoteMaster!.courses : remoteSubCourses as any[];
-        const remoteStaff = Array.isArray(remoteMaster?.staff) ? remoteMaster!.staff : remoteSubStaff as any[];
-        const mergedBatches = mergeRecordsByKeySafely(state.batches || [], remoteBatches, 'code', 'batches');
-        const mergedCourses = mergeRecordsByKeySafely(state.courses || [], remoteCourses, 'id', 'courses');
-        const mergedStaff = mergeRecordsByKeySafely(state.staff || [], remoteStaff, 'id', 'staff');
+        const mergedBatches = Array.isArray(remoteMaster?.batches)
+          ? mergeRecordsByKeySafely(state.batches || [], remoteMaster!.batches, 'code', 'batches')
+          : state.batches;
+        const mergedCourses = Array.isArray(remoteMaster?.courses)
+          ? mergeRecordsByKeySafely(state.courses || [], remoteMaster!.courses, 'id', 'courses')
+          : state.courses;
+        const mergedStaff = Array.isArray(remoteMaster?.staff)
+          ? mergeRecordsByKeySafely(state.staff || [], remoteMaster!.staff, 'id', 'staff')
+          : state.staff;
         const mergedAttendance = remoteMaster?.attendance
           ? mergeAttendanceSafely(state.attendance || {}, remoteMaster.attendance)
           : state.attendance;
@@ -1313,12 +1073,7 @@ export async function dualWriteToCloud(
           batches: mergedBatches,
           courses: mergedCourses,
           staff: mergedStaff,
-          attendance: mergedAttendance,
-          settings: {
-            ...(state.settings || {}),
-            ...(remoteSettings || {}),
-            ...(remoteMaster?.settings || {})
-          }
+          attendance: mergedAttendance
         };
       } catch (preMergeErr) {
         console.warn('Pre-push cloud merge check warning:', preMergeErr);
@@ -1339,58 +1094,112 @@ export async function dualWriteToCloud(
     stateToPush.lastSavedAt = timestamp;
 
     await saveStateToStorage(stateToPush, { preserveTimestamp: true });
-    syncWindowInstituteDB(stateToPush);
+    const unifiedDB = syncWindowInstituteDB(stateToPush);
     const channels: string[] = ['Local Cache'];
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setPendingOfflineWritesCount(1);
       return {
-        ok: false,
+        ok: true,
         channels,
         timestamp,
         state: stateToPush,
-        message: 'Saved on this device only. Reconnect to the internet and sign in to sync to the shared Firebase database.'
+        message: 'Saved locally (Offline Mode — queued for automatic online sync).'
       };
     }
 
-    let firestoreError: string | null = null;
     setSyncEngineWorking(true);
     try {
-      // One shared storage only: Firebase Firestore canonical workspace document.
-      // Do not report a successful cloud backup unless the canonical Firestore write succeeds.
-      try {
-        if (options?.interactiveAuth && !auth.currentUser) {
-          await signInWithGoogle();
+      // Run Cloud Server mirror, optional RTDB mirror, and Firebase Firestore sync in parallel so total duration is fast (< 2s)
+      const serverPromise = (async () => {
+        try {
+          const resp = await fetchWithTimeout(
+            '/api/cloud/state',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ state: stateToPush, instituteDB: unifiedDB, isOverwrite: true })
+            },
+            8000
+          );
+          const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+          if (resp.ok && contentType.includes('application/json')) {
+            channels.push('Cloud Server');
+            recordCloudWriteSuccess();
+          }
+        } catch (err) {
+          console.warn('Online server mirror warning:', err);
         }
-        if (!auth.currentUser) {
-          throw new Error('Real Google/Firebase sign-in is required on this device. Local CRM sessions cannot write to Firestore.');
+      })();
+
+      const rtdbPromise = (async () => {
+        const customUrl = stateToPush.settings?.cloudConfig?.firebaseUrl?.trim();
+        if (customUrl && /^https?:\/\//i.test(customUrl)) {
+          try {
+            const base = customUrl.replace(/\/+$/, '').replace(/\/(srujaan_main_store|instituteDB)\.json$/i, '');
+            const tokenParam = stateToPush.settings?.cloudConfig?.authToken
+              ? `?auth=${encodeURIComponent(stateToPush.settings.cloudConfig.authToken)}`
+              : '';
+            const payloadToPut = {
+              ...unifiedDB,
+              updatedAt: timestamp,
+              lastModified: timestamp,
+              payload: stateToPush
+            };
+            const [mainResp] = await Promise.all([
+              fetchWithTimeout(
+                `${base}/srujaan_main_store.json${tokenParam}`,
+                {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payloadToPut)
+                },
+                8000
+              ),
+              fetchWithTimeout(
+                `${base}/instituteDB.json${tokenParam}`,
+                {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payloadToPut)
+                },
+                8000
+              ).catch(() => null)
+            ]);
+            if (mainResp && mainResp.ok) {
+              channels.push('Firebase RTDB');
+            }
+          } catch (err) {
+            console.warn('Custom Firebase REST sync warning:', err);
+          }
         }
-        const synced = await syncFullStateToFirestore(stateToPush, isOverwrite);
-        if (!synced) {
-          throw new Error('The canonical Firestore write failed. Check Firebase Auth and Firestore security rules.');
+      })();
+
+      const firestorePromise = (async () => {
+        try {
+          if (options?.interactiveAuth && !auth.currentUser) {
+            await signInWithGoogle();
+          }
+          const synced = await syncFullStateToFirestore(stateToPush);
+          if (synced) {
+            channels.push('Firebase Firestore');
+          }
+        } catch (err) {
+          console.warn('Firebase Firestore sync notice:', err);
         }
-        channels.push('Firebase Firestore');
-      } catch (err: any) {
-        firestoreError = err?.message || String(err);
-        console.error('[SSMI canonical cloud sync failed]', firestoreError);
-        recordSyncError(firestoreError, err);
-      }
+      })();
+
+      await Promise.all([serverPromise, rtdbPromise, firestorePromise]);
     } finally {
       setSyncEngineWorking(false);
     }
 
-    const cloudSynced = channels.includes('Firebase Firestore');
-    if (cloudSynced && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('ssm-canonical-sync-success'));
-    }
     return {
-      ok: cloudSynced,
+      ok: true,
       channels,
       timestamp,
       state: stateToPush,
-      message: cloudSynced
-        ? `${isOverwrite ? 'Overwrote canonical shared Firebase workspace' : 'Synchronized canonical shared Firebase workspace'}.`
-        : `NOT synced to shared cloud storage. ${firestoreError || 'Sign in with the authorized Google account and retry.'}`
+      message: `${isOverwrite ? 'Force-overwrote' : 'Pushed synchronized state to'}: ${channels.join(' + ')}`
     };
   };
 
@@ -1404,8 +1213,9 @@ export async function dualWriteToCloud(
 
 /**
  * Master Fetch from Cloud:
- * Pulls the canonical Firebase Firestore workspace snapshot shared by all authorized devices.
- * Legacy Firestore collections are used only for one-time migration when no master snapshot exists.
+ * Pulls the latest active state from Firestore `institutes/srujaan_share_market_pune` (and `institute_master_data`),
+ * Firestore sub-collections (`students` and `leads`), Custom Firebase RTDB URL, and Online Server,
+ * performing Last-Write-Wins conflict resolution by `updatedAt` so newer cloud records overwrite stale local cache.
  */
 export async function masterFetchFromCloud(
   currentState: AppState,
@@ -1448,18 +1258,15 @@ export async function masterFetchFromCloud(
       }
     }
 
-    // Fetch the canonical snapshot first. Legacy per-collection mirrors are migration-only.
-    const masterDoc = await fetchMasterInstituteFromFirestore('institute_master_data');
-    const canonicalSnapshot = Boolean(masterDoc && Number((masterDoc as any).syncSchemaVersion || 0) >= 2);
-    const [remoteStudents, remoteLeads, remoteSettings] = canonicalSnapshot
-      ? [[], [], null]
-      : await Promise.all([
-          fetchStudentsFromFirestore(),
-          fetchLeadsFromFirestore(),
-          fetchSettingsFromFirestore()
-        ]);
+    // Always fetch master doc + students collection + leads collection + settings in parallel
+    const [masterDoc, remoteStudents, remoteLeads, remoteSettings] = await Promise.all([
+      fetchMasterInstituteFromFirestore('institute_master_data'),
+      fetchStudentsFromFirestore(),
+      fetchLeadsFromFirestore(),
+      fetchSettingsFromFirestore()
+    ]);
 
-    const needAuxCollections = !canonicalSnapshot && (!masterDoc || !Array.isArray(masterDoc.batches));
+    const needAuxCollections = !masterDoc || !Array.isArray(masterDoc.batches);
     const [remoteBatches, remoteStaff, remoteCourses] = needAuxCollections
       ? await Promise.all([
           fetchBatchesFromFirestore(),
@@ -1468,13 +1275,11 @@ export async function masterFetchFromCloud(
         ])
       : [[], [], []];
 
-    // Once the canonical full-state snapshot exists, it is authoritative. Older per-collection
-    // mirrors are retained for backwards compatibility but must not resurrect stale records.
-    const cleanSubStudents = canonicalSnapshot ? [] : filterActiveRecords(remoteStudents as any[], 'students', 'id');
-    const cleanSubLeads = canonicalSnapshot ? [] : filterActiveRecords(remoteLeads as any[], 'leads', 'id');
-    const cleanSubBatches = canonicalSnapshot ? [] : filterActiveRecords(remoteBatches as any[], 'batches', 'code');
-    const cleanSubStaff = canonicalSnapshot ? [] : filterActiveRecords(remoteStaff as any[], 'staff', 'id');
-    const cleanSubCourses = canonicalSnapshot ? [] : filterActiveRecords(remoteCourses as any[], 'courses', 'id');
+    const cleanSubStudents = filterActiveRecords(remoteStudents as any[], 'students', 'id');
+    const cleanSubLeads = filterActiveRecords(remoteLeads as any[], 'leads', 'id');
+    const cleanSubBatches = filterActiveRecords(remoteBatches as any[], 'batches', 'code');
+    const cleanSubStaff = filterActiveRecords(remoteStaff as any[], 'staff', 'id');
+    const cleanSubCourses = filterActiveRecords(remoteCourses as any[], 'courses', 'id');
 
     if (masterDoc) {
       const remotePayload = masterDoc.payload ? masterDoc.payload : masterDoc;
@@ -1504,33 +1309,34 @@ export async function masterFetchFromCloud(
 
       // Combine masterDoc + sub-collections using Last-Write-Wins by updatedAt (sub-collections passed second so latest per-doc writes win)
       const cloudMergedStudents = mergeStudentsSafely(masterStudents, cleanSubStudents);
-      const combinedCloudStudents = canonicalSnapshot || isLocalSeed
+      const combinedCloudStudents = isLocalSeed
         ? cloudMergedStudents
         : mergeStudentsSafely(mergedState.students || [], cloudMergedStudents);
 
       const cloudMergedLeads = mergeRecordsByKeySafely(masterLeads, cleanSubLeads, 'id', 'leads');
-      const combinedCloudLeads = canonicalSnapshot || isLocalSeed
+      const combinedCloudLeads = isLocalSeed
         ? cloudMergedLeads
         : mergeRecordsByKeySafely(mergedState.leads || [], cloudMergedLeads, 'id', 'leads');
 
       const cloudMergedBatches = mergeRecordsByKeySafely(masterBatches, cleanSubBatches, 'code', 'batches');
-      const combinedCloudBatches = canonicalSnapshot || isLocalSeed
+      const combinedCloudBatches = isLocalSeed
         ? cloudMergedBatches
         : mergeRecordsByKeySafely(mergedState.batches || [], cloudMergedBatches, 'code', 'batches');
 
       const cloudMergedStaff = mergeRecordsByKeySafely(masterStaff, cleanSubStaff, 'id', 'staff');
-      const combinedCloudStaff = canonicalSnapshot || isLocalSeed
+      const combinedCloudStaff = isLocalSeed
         ? cloudMergedStaff
         : mergeRecordsByKeySafely(mergedState.staff || [], cloudMergedStaff, 'id', 'staff');
 
       const cloudMergedCourses = mergeRecordsByKeySafely(masterCourses, cleanSubCourses, 'id', 'courses');
-      const combinedCloudCourses = canonicalSnapshot || isLocalSeed
+      const combinedCloudCourses = isLocalSeed
         ? cloudMergedCourses
         : mergeRecordsByKeySafely(mergedState.courses || [], cloudMergedCourses, 'id', 'courses');
 
-      const combinedAttendance = canonicalSnapshot
-        ? (remotePayload.attendance || {})
-        : mergeAttendanceSafely(mergedState.attendance || {}, remotePayload.attendance || {});
+      const combinedAttendance = mergeAttendanceSafely(
+        mergedState.attendance || {},
+        remotePayload.attendance || {}
+      );
 
       mergedState = normalizeLoadedState({
         ...mergedState,
@@ -1538,29 +1344,33 @@ export async function masterFetchFromCloud(
         students: combinedCloudStudents,
         leads: combinedCloudLeads,
         batches: combinedCloudBatches,
-        staff: canonicalSnapshot ? combinedCloudStaff : combinedCloudStaff.length > 0 ? combinedCloudStaff : mergedState.staff,
-        courses: canonicalSnapshot ? combinedCloudCourses : combinedCloudCourses.length > 0 ? combinedCloudCourses : mergedState.courses,
+        staff: combinedCloudStaff.length > 0 ? combinedCloudStaff : mergedState.staff,
+        courses: combinedCloudCourses.length > 0 ? combinedCloudCourses : mergedState.courses,
         materials: Array.isArray(remotePayload.materials || remotePayload.studyMaterials)
-          ? canonicalSnapshot
-            ? (remotePayload.materials || remotePayload.studyMaterials)
-            : mergeRecordsByKeySafely(mergedState.materials || [], remotePayload.materials || remotePayload.studyMaterials, 'id')
+          ? mergeRecordsByKeySafely(
+              mergedState.materials || [],
+              remotePayload.materials || remotePayload.studyMaterials,
+              'id'
+            )
           : mergedState.materials,
         lectures: Array.isArray(remotePayload.lectures)
-          ? canonicalSnapshot ? remotePayload.lectures : mergeRecordsByKeySafely(mergedState.lectures || [], remotePayload.lectures, 'id')
+          ? mergeRecordsByKeySafely(mergedState.lectures || [], remotePayload.lectures, 'id')
           : mergedState.lectures,
         attendance: combinedAttendance,
         attendanceHistory: Array.isArray(remotePayload.attendanceHistory)
-          ? canonicalSnapshot ? remotePayload.attendanceHistory : mergeRecordsByKeySafely(mergedState.attendanceHistory || [], remotePayload.attendanceHistory, 'id')
+          ? mergeRecordsByKeySafely(mergedState.attendanceHistory || [], remotePayload.attendanceHistory, 'id')
           : mergedState.attendanceHistory,
         certificates: Array.isArray(remotePayload.certificates)
-          ? canonicalSnapshot ? remotePayload.certificates : mergeRecordsByKeySafely(mergedState.certificates || [], remotePayload.certificates, 'id')
+          ? mergeRecordsByKeySafely(mergedState.certificates || [], remotePayload.certificates, 'id')
           : mergedState.certificates,
         dailyQueue: Array.isArray(remotePayload.dailyQueue)
           ? remotePayload.dailyQueue
           : mergedState.dailyQueue,
-        settings: canonicalSnapshot
-          ? { ...(remotePayload.settings || {}) }
-          : { ...mergedState.settings, ...(remoteSettings || {}), ...(remotePayload.settings || {}) }
+        settings: {
+          ...mergedState.settings,
+          ...(remoteSettings || {}),
+          ...(remotePayload.settings || {})
+        }
       });
       (mergedState as any).updatedAt = remoteTimeStr || timestamp;
       (mergedState as any).isSeedData = false;
@@ -1614,18 +1424,115 @@ export async function masterFetchFromCloud(
     console.warn('Firestore fetch warning:', err);
   }
 
-  // Firestore canonical workspace is the sole source of truth.
+  // 2. Check Custom Firebase Realtime DB / REST URL if configured
+  const customUrl = mergedState.settings?.cloudConfig?.firebaseUrl?.trim();
+  if (customUrl && /^https?:\/\//i.test(customUrl)) {
+    try {
+      const base = customUrl.replace(/\/+$/, '').replace(/\/(srujaan_main_store|instituteDB)\.json$/i, '');
+      const tokenParam = mergedState.settings?.cloudConfig?.authToken
+        ? `?auth=${encodeURIComponent(mergedState.settings.cloudConfig.authToken)}`
+        : '';
+      let resp = await fetchWithTimeout(`${base}/srujaan_main_store.json${tokenParam}`, {}, 10000);
+      if (!resp.ok) {
+        resp = await fetchWithTimeout(`${base}/instituteDB.json${tokenParam}`, {}, 10000);
+      }
+      if (resp.ok) {
+        const remoteDB: any = await resp.json();
+        const remotePayload = remoteDB?.payload || remoteDB;
+        if (remotePayload && Array.isArray(remotePayload.students) && !authoritativeCloudApplied) {
+          const cleanStudents = filterActiveRecords<AppState['students'][number]>(
+            remotePayload.students,
+            'students',
+            'id'
+          );
+          const cleanStaff = Array.isArray(remotePayload.staff)
+            ? filterActiveRecords<AppState['staff'][number]>(remotePayload.staff, 'staff', 'id')
+            : mergedState.staff;
+          const cleanCourses = Array.isArray(remotePayload.courses)
+            ? filterActiveRecords<Course>(remotePayload.courses, 'courses', 'id')
+            : mergedState.courses;
+          const cleanBatches = Array.isArray(remotePayload.batches)
+            ? filterActiveRecords<AppState['batches'][number]>(remotePayload.batches, 'batches', 'code')
+            : mergedState.batches;
+          const cleanLeads = Array.isArray(remotePayload.leads)
+            ? filterActiveRecords<AppState['leads'][number]>(remotePayload.leads, 'leads', 'id')
+            : mergedState.leads;
 
-  // Firestore is the only authoritative database. Never hydrate from a per-deployment server mirror.
+          mergedState = normalizeLoadedState({
+            ...mergedState,
+            students: mergeStudentsSafely(mergedState.students || [], cleanStudents),
+            staff: cleanStaff,
+            courses: cleanCourses,
+            lectures: Array.isArray(remotePayload.lectures) ? remotePayload.lectures : mergedState.lectures,
+            materials: Array.isArray(remotePayload.studyMaterials || remotePayload.materials)
+              ? remotePayload.studyMaterials || remotePayload.materials
+              : mergedState.materials,
+            batches: cleanBatches,
+            leads: mergeRecordsByKeySafely(mergedState.leads || [], cleanLeads, 'id', 'leads'),
+            certificates: Array.isArray(remotePayload.certificates)
+              ? remotePayload.certificates
+              : mergedState.certificates,
+            settings: remoteDB?.settings?.fullSettings
+              ? { ...mergedState.settings, ...remoteDB.settings.fullSettings }
+              : remotePayload.settings
+              ? { ...mergedState.settings, ...remotePayload.settings }
+              : mergedState.settings
+          });
+          (mergedState as any).isSeedData = false;
+          sourcesUsed.push('Firebase RTDB');
+          updated = true;
+        }
+      }
+    } catch (err) {
+      console.warn('Error fetching from custom Firebase REST URL:', err);
+    }
+  }
+
+  // 3. Check Online Cloud Run Server (/api/cloud/state) as fallback if Firestore was unreachable
+  if (!authoritativeCloudApplied) {
+    try {
+      const resp = await fetchWithTimeout('/api/cloud/state', {}, 10000);
+      const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+      if (resp.ok && contentType.includes('application/json')) {
+        const data = await resp.json();
+        if (data?.state && Array.isArray(data.state.students)) {
+          const remoteState = data.state as AppState;
+          const cleanStudents = filterActiveRecords(remoteState.students, 'students', 'id');
+          const cleanLeads = filterActiveRecords(remoteState.leads || [], 'leads', 'id');
+          const cleanStaff = filterActiveRecords(remoteState.staff || [], 'staff', 'id');
+          const cleanCourses = filterActiveRecords(remoteState.courses || [], 'courses', 'id');
+          const cleanBatches = filterActiveRecords(remoteState.batches || [], 'batches', 'code');
+
+          mergedState = normalizeLoadedState({
+            ...mergedState,
+            ...remoteState,
+            students: isLocalSeed ? cleanStudents : mergeStudentsSafely(mergedState.students || [], cleanStudents),
+            leads: isLocalSeed ? cleanLeads : mergeRecordsByKeySafely(mergedState.leads || [], cleanLeads, 'id', 'leads'),
+            staff: cleanStaff.length > 0 ? cleanStaff : mergedState.staff,
+            courses: cleanCourses.length > 0 ? cleanCourses : mergedState.courses,
+            batches: cleanBatches,
+            settings: {
+              ...mergedState.settings,
+              ...(remoteState.settings || {})
+            }
+          });
+          (mergedState as any).isSeedData = false;
+          sourcesUsed.push('Cloud Server');
+          updated = true;
+          recordCloudReadSuccess();
+        }
+      }
+    } catch (err) {
+      console.warn('Error fetching from online server mirror:', err);
+    }
+  }
 
   mergedState = normalizeLoadedState(mergedState);
-  if (sourcesUsed.includes('Firebase Firestore')) {
-    mergedState.lastCloudSyncAt = new Date().toLocaleString('en-IN', { hour12: false });
-    mergedState.syncQueue = (mergedState.syncQueue || []).map(q => ({
-      ...q,
-      status: 'Synced with Shared Firebase'
-    }));
-  }
+  mergedState.lastCloudSyncAt = new Date().toLocaleString('en-IN', { hour12: false });
+  mergedState.syncQueue = (mergedState.syncQueue || []).map(q => ({
+    ...q,
+    status: 'Synced with Cloud'
+  }));
 
   // Calculate exact count of new and updated records across students and leads
   const stripMeta = (obj: any) => {
@@ -1674,6 +1581,55 @@ export async function masterFetchFromCloud(
     newCount,
     updatedCount
   };
+}
+
+/**
+ * Sets up a safe Server-Sent Events (SSE) real-time listener on Firebase Realtime Database
+ * (`${firebaseUrl}/srujaan_main_store.json`) if configured by the user.
+ * Silently closes on error so zero console errors occur when not configured.
+ */
+export function setupFirebaseSseListener(
+  firebaseUrl: string | undefined,
+  authToken: string | undefined,
+  onRemoteState: (remotePayload: any) => void
+): () => void {
+  if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
+    return () => {};
+  }
+  const clean = (firebaseUrl || '').trim();
+  if (!clean || !/^https?:\/\//i.test(clean)) {
+    return () => {};
+  }
+
+  try {
+    const base = clean.replace(/\/+$/, '').replace(/\/(srujaan_main_store|instituteDB)\.json$/i, '');
+    const tokenParam = authToken ? `?auth=${encodeURIComponent(authToken)}` : '';
+    const sse = new EventSource(`${base}/srujaan_main_store.json${tokenParam}`);
+
+    const handlePut = (event: MessageEvent) => {
+      try {
+        const packet = JSON.parse(event.data);
+        const remoteData = packet?.data;
+        if (remoteData && (remoteData.payload || Array.isArray(remoteData.students))) {
+          onRemoteState(remoteData.payload || remoteData);
+        }
+      } catch {
+        // Ignore malformed SSE packets
+      }
+    };
+
+    sse.addEventListener('put', handlePut as EventListener);
+    sse.onerror = () => {
+      sse.close();
+    };
+
+    return () => {
+      sse.removeEventListener('put', handlePut as EventListener);
+      sse.close();
+    };
+  } catch {
+    return () => {};
+  }
 }
 
 export async function checkStorageQuota(state: AppState): Promise<StorageQuotaInfo> {

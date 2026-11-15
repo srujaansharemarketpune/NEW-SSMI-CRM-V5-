@@ -85,42 +85,18 @@ let currentBackupProgress: BackupProgressState = {
   message: 'Ready'
 };
 
+let memoryLastVerifiedBackupMeta: LastVerifiedBackupMeta | null = null;
+
 export function getLastVerifiedBackupMeta(): LastVerifiedBackupMeta | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(LAST_VERIFIED_BACKUP_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as LastVerifiedBackupMeta;
-  } catch {
-    return null;
-  }
+  return memoryLastVerifiedBackupMeta;
 }
 
 function saveLastVerifiedBackupMeta(meta: LastVerifiedBackupMeta): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(LAST_VERIFIED_BACKUP_KEY, JSON.stringify(meta));
-    localStorage.removeItem(BACKUP_CHECKPOINT_KEY);
-  } catch {
-    // ignore storage quota errors
-  }
+  memoryLastVerifiedBackupMeta = meta;
 }
 
-function saveBackupCheckpoint(collName: string, countSoFar: number): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(
-      BACKUP_CHECKPOINT_KEY,
-      JSON.stringify({
-        workspaceId: INSTITUTE_WORKSPACE_ID,
-        lastCollection: collName,
-        recordsProcessed: countSoFar,
-        updatedAt: new Date().toISOString()
-      })
-    );
-  } catch {
-    // ignore
-  }
+function saveBackupCheckpoint(_collName: string, _countSoFar: number): void {
+  // No-op: 100% online Firestore backup tracking
 }
 
 export function getCurrentBackupProgress(): BackupProgressState {
@@ -235,20 +211,13 @@ export async function fetchWithLocationFallback(collName: string, chunkSize = 50
 export const fetchCollectionInChunks = fetchWithLocationFallback;
 
 /**
- * Reads local fallback records from localStorage/master snapshot so backups work 100% even on cold cache or offline
+ * Reads runtime fallback records from window.instituteDB if present
  */
 function readLocalFallbackCollection(collName: string): any[] {
   if (typeof window === 'undefined') return [];
   try {
-    const rawMaster =
-      localStorage.getItem('srujaan_crm_data_v1') ||
-      localStorage.getItem('SRUJAAN_IMS_OFFLINE_MIRROR_V5') ||
-      localStorage.getItem('srujaan_master_db') ||
-      localStorage.getItem('srujaan_ims_db_v1') ||
-      localStorage.getItem('ssmi_enterprise_state_v5');
-    if (rawMaster) {
-      const parsed = JSON.parse(rawMaster);
-      const stateRoot = parsed?.payload ? parsed.payload : parsed;
+    const stateRoot = (window as any).instituteDB;
+    if (stateRoot) {
       if ((collName === 'inquiries' || collName === 'leads') && Array.isArray(stateRoot?.leads)) {
         return stateRoot.leads;
       }
@@ -266,13 +235,6 @@ function readLocalFallbackCollection(collName: string): any[] {
       }
       if (Array.isArray(stateRoot?.[collName])) {
         return stateRoot[collName];
-      }
-    }
-    if (collName === 'students') {
-      const rawStudents = localStorage.getItem('crm_students') || localStorage.getItem('ssmi_students_v1');
-      if (rawStudents) {
-        const arr = JSON.parse(rawStudents);
-        if (Array.isArray(arr)) return arr;
       }
     }
   } catch {

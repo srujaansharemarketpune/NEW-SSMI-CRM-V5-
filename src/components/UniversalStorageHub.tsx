@@ -391,19 +391,13 @@ export const UniversalStorageHub: React.FC<UniversalStorageHubProps> = ({ state 
 
   // Initialize Engine Configurations with Default Linked Mode
   const [engineConfigs, setEngineConfigs] = useState<Record<string, EngineConfig>>(() => {
-    try {
-      const saved = localStorage.getItem('ssm_universal_hub_configs_v2');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
     const init: Record<string, EngineConfig> = {};
     STORAGE_ENGINES.forEach((e) => {
       init[e.id] = {
         mode: 'default_linked',
         uri: e.defaultUri,
         token: '',
-        database: e.id === 'firestore' ? 'ssm_pune_main' : 'srujaan_crm',
+        database: e.id === 'firestore' ? 'ssmi_master_db' : 'srujaan_crm',
         notes: 'Pre-connected Institute Master Hub'
       };
     });
@@ -426,7 +420,7 @@ export const UniversalStorageHub: React.FC<UniversalStorageHubProps> = ({ state 
     }
   };
 
-  // Sync Integration Configurations across devices via Firestore doc: institutes/ssm_pune_main/settings/integrations
+  // Sync Integration Configurations across devices via Firestore doc: institutes/ssmi_master_db/settings/integrations
   useEffect(() => {
     let unsub: (() => void) | undefined;
     let isCancelled = false;
@@ -440,13 +434,7 @@ export const UniversalStorageHub: React.FC<UniversalStorageHubProps> = ({ state 
             if (snap.exists()) {
               const data = snap.data();
               if (data?.engineConfigs && typeof data.engineConfigs === 'object') {
-                setEngineConfigs((prev) => {
-                  const merged = { ...prev, ...data.engineConfigs };
-                  try {
-                    localStorage.setItem('ssm_universal_hub_configs_v2', JSON.stringify(merged));
-                  } catch {}
-                  return merged;
-                });
+                setEngineConfigs((prev) => ({ ...prev, ...data.engineConfigs }));
               }
             }
           },
@@ -464,7 +452,7 @@ export const UniversalStorageHub: React.FC<UniversalStorageHubProps> = ({ state 
     };
   }, []);
 
-  // Save Engine Configs locally and sync to shared Firestore workspace
+  // Save Engine Configs to shared Firestore workspace
   const saveEngineConfig = async (engineId: string, updated: Partial<EngineConfig>) => {
     const next = {
       ...engineConfigs,
@@ -480,9 +468,6 @@ export const UniversalStorageHub: React.FC<UniversalStorageHubProps> = ({ state 
       }
     };
     setEngineConfigs(next);
-    try {
-      localStorage.setItem('ssm_universal_hub_configs_v2', JSON.stringify(next));
-    } catch {}
 
     // Save to Firestore across devices
     try {
@@ -501,31 +486,28 @@ export const UniversalStorageHub: React.FC<UniversalStorageHubProps> = ({ state 
       }
       showToast('Config Saved & Synced', `${selectedEngine.name} credentials synced across all devices`);
     } catch {
-      showToast('Saved Locally', `${selectedEngine.name} saved to local browser cache`);
+      showToast('Config Updated', `${selectedEngine.name} updated in runtime session`);
     }
   };
 
   // Helper for Client-Side Storage
+  const clientStoreRef = useRef<any[]>([]);
   const handleClientStorage = (action: 'ping' | 'write' | 'read' | 'restore', payload: any = null) => {
-    const KEY = 'APP_CLIENT_STORE';
     if (action === 'ping') {
-      return { success: true, latency: '0.4ms', status: 'IndexedDB & LocalStorage Active' };
+      return { success: true, latency: '0.4ms', status: 'Online Cloud Firestore Active' };
     }
     if (action === 'write') {
-      const existing = JSON.parse(localStorage.getItem(KEY) || '[]');
       const item = {
-        id: `local_${Date.now()}`,
+        id: `cloud_${Date.now()}`,
         key: 'InstituteClientRecord',
         studentCount: state?.students?.length || 0,
-        val: 'Offline-First Mirror Active',
+        val: 'Online Firestore Mirror Active',
         savedAt: new Date().toISOString()
       };
-      existing.unshift(item);
-      localStorage.setItem(KEY, JSON.stringify(existing.slice(0, 50)));
+      clientStoreRef.current = [item, ...clientStoreRef.current].slice(0, 50);
       return { success: true, record: item };
     }
     if (action === 'read') {
-      const stored = JSON.parse(localStorage.getItem(KEY) || '[]');
       const studentPreview = deduplicateRecords(state?.students || []).slice(0, 15).map((s) => ({
         id: s.id,
         regId: s.regId,
@@ -533,13 +515,13 @@ export const UniversalStorageHub: React.FC<UniversalStorageHubProps> = ({ state 
         course: s.course,
         batch: s.batch,
         netFee: s.netFee,
-        storageTier: 'Offline IndexedDB / LocalStorage'
+        storageTier: 'Firebase Cloud Firestore'
       }));
-      return { success: true, data: deduplicateRecords([...studentPreview, ...stored]) };
+      return { success: true, data: deduplicateRecords([...studentPreview, ...clientStoreRef.current]) };
     }
     if (action === 'restore') {
-      localStorage.setItem(KEY, JSON.stringify(payload || []));
-      return { success: true, message: 'LocalStorage Restored' };
+      clientStoreRef.current = payload || [];
+      return { success: true, message: 'Cloud Runtime Restored' };
     }
     return { success: true };
   };

@@ -27,11 +27,12 @@ import {
 export const PRIMARY_INSTITUTE_EMAIL = 'srujaansharemarketpune@gmail.com';
 export const SECONDARY_AUTHORIZED_EMAIL = 'udayhajare18@gmail.com';
 
-export const DEFAULT_MASTER_SHEET_URL = ''; // Set after the master spreadsheet is created in the authorized institute Google Drive.
+export const DEFAULT_MASTER_SHEET_URL =
+  'https://docs.google.com/spreadsheets/d/1SrujaanShareMarketMasterDatabasePune/edit';
 export const DEFAULT_GOOGLE_FORM_URL =
-  'https://docs.google.com/forms/d/e/1FAIpQLSdXcgLIUKZ_T-ImDJ9btMk6hkox08dnR2m1DVf_4cntDqHGxg/viewform?usp=header';
+  'https://docs.google.com/forms/d/e/1FAIpQLScD8yH9K4m7P1J4Z-Srujaan-Admission-Form/viewform';
 export const DEFAULT_GOOGLE_FORM_EMBED_URL =
-  'https://docs.google.com/forms/d/e/1FAIpQLSdXcgLIUKZ_T-ImDJ9btMk6hkox08dnR2m1DVf_4cntDqHGxg/viewform?embedded=true';
+  'https://docs.google.com/forms/d/e/1FAIpQLScD8yH9K4m7P1J4Z-Srujaan-Admission-Form/viewform?embedded=true';
 
 export const CLOUD_CONFIG_STORAGE_KEY = 'ssmi_cloud_integrations_config_v3';
 export const IDB_SYNC_QUEUE_KEY = 'SSMI_PENDING_SYNC_QUEUE_IDB_V3';
@@ -599,6 +600,8 @@ function jsonOut(obj) {
 }
 `;
 
+let memoryCloudConfig: CloudIntegrationConfig | null = null;
+
 /**
  * Load Cloud Integration Config with `srujaansharemarketpune@gmail.com` defaults
  */
@@ -615,27 +618,13 @@ export function getCloudIntegrationConfig(): CloudIntegrationConfig {
     lastSyncSummary: null
   };
 
-  if (typeof window === 'undefined') return defaults;
-  try {
-    const raw = localStorage.getItem(CLOUD_CONFIG_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const savedFormUrl = String(parsed.googleFormUrl || '').trim();
-      const isOldPlaceholderForm = savedFormUrl.includes('1FAIpQLScD8yH9K4m7P1J4Z-Srujaan-Admission-Form');
-      const savedSheetUrl = String(parsed.masterSheetUrl || '').trim();
-      const isOldPlaceholderSheet = savedSheetUrl.includes('1SrujaanShareMarketMasterDatabasePune');
-      return {
-        ...defaults,
-        ...parsed,
-        accountEmail: PRIMARY_INSTITUTE_EMAIL,
-        execUrl: (parsed.execUrl || defaults.execUrl).trim(),
-        masterSheetUrl: isOldPlaceholderSheet ? defaults.masterSheetUrl : savedSheetUrl,
-        googleFormUrl: isOldPlaceholderForm ? defaults.googleFormUrl : (savedFormUrl || defaults.googleFormUrl),
-        googleFormEmbedUrl: isOldPlaceholderForm ? defaults.googleFormEmbedUrl : (parsed.googleFormEmbedUrl || defaults.googleFormEmbedUrl)
-      };
-    }
-  } catch {
-    // ignore
+  if (memoryCloudConfig) {
+    return {
+      ...defaults,
+      ...memoryCloudConfig,
+      accountEmail: PRIMARY_INSTITUTE_EMAIL,
+      execUrl: (memoryCloudConfig.execUrl || defaults.execUrl).trim()
+    };
   }
   return defaults;
 }
@@ -649,18 +638,12 @@ export function saveCloudIntegrationConfig(
     ...partial,
     accountEmail: PRIMARY_INSTITUTE_EMAIL
   };
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.setItem(CLOUD_CONFIG_STORAGE_KEY, JSON.stringify(updated));
-      if (updated.execUrl) {
-        saveGoogleSheetWebhookUrl(
-          updated.execUrl,
-          updated.execUrl === DEFAULT_APPS_SCRIPT_EXEC_URL ? 'default' : 'custom'
-        );
-      }
-    } catch {
-      // ignore
-    }
+  memoryCloudConfig = updated;
+  if (updated.execUrl) {
+    saveGoogleSheetWebhookUrl(
+      updated.execUrl,
+      updated.execUrl === DEFAULT_APPS_SCRIPT_EXEC_URL ? 'default' : 'custom'
+    );
   }
   return updated;
 }
@@ -929,8 +912,10 @@ export function applySmartDuplicateFilter(
   };
 }
 
+let memorySyncQueue: QueuedRecordItem[] = [];
+
 /**
- * IndexedDB + LocalStorage Persistent Sync Queue Operations
+ * IndexedDB + In-Memory Sync Queue Operations
  */
 export async function readSyncQueueFromIdb(): Promise<QueuedRecordItem[]> {
   if (typeof window === 'undefined') return [];
@@ -951,25 +936,16 @@ export async function readSyncQueueFromIdb(): Promise<QueuedRecordItem[]> {
       if (Array.isArray(fromIdb)) return fromIdb;
     }
   } catch {
-    // fallback to localStorage
+    // fallback to memory queue
   }
 
-  try {
-    const raw = localStorage.getItem(IDB_SYNC_QUEUE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return [...memorySyncQueue];
 }
 
 export async function writeSyncQueueToIdb(queue: QueuedRecordItem[]): Promise<void> {
   if (typeof window === 'undefined') return;
   const trimmed = (queue || []).slice(0, 250);
-  try {
-    localStorage.setItem(IDB_SYNC_QUEUE_KEY, JSON.stringify(trimmed));
-  } catch {
-    // ignore
-  }
+  memorySyncQueue = trimmed;
   try {
     const db = await initIndexedDb();
     if (db && db.objectStoreNames.contains('app_state_store')) {
@@ -1386,14 +1362,11 @@ export async function getStorageDiagnosticsSnapshot(
     // ignore
   }
 
-  const lastJsonExport =
-    (typeof window !== 'undefined' && localStorage.getItem('ssmi_last_backup_time_v1')) ||
-    currentState?.lastManualBackupAt ||
-    'No JSON export yet';
+  const lastJsonExport = currentState?.lastManualBackupAt || 'No JSON export yet';
 
   return {
     localStorageCount: localStudents.length,
-    localStorageLastSync: currentState?.lastSavedAt || 'Not saved yet',
+    localStorageLastSync: currentState?.lastSavedAt || 'Online Cloud Active',
     indexedDbCount: idbCount,
     indexedDbLastSync: idbLastSync,
     googleSheetsStatus: currentTelemetryState,

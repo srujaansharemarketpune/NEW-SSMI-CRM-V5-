@@ -3,7 +3,7 @@ import { AppState } from '../types';
 import { LIVE_TODAY_ISO } from '../data/initialData';
 import { AiChatEntry, renderRichMarkdown } from './OmniBotDrawer';
 import { NavTabId } from './Navbar';
-import { getStudentAttendancePct } from '../services/gemini';
+import { getStudentAttendancePct, getSmartSentenceCompletions } from '../services/gemini';
 import {
   AlertCircle,
   RotateCcw,
@@ -111,9 +111,10 @@ export const AiCenterView: React.FC<AiCenterViewProps> = ({
   };
 
   const activeError = aiError || localError;
+  const smartSuggestions = getSmartSentenceCompletions(input, state);
 
   const quickPrompts = [
-    'Change the instructor of Master Price Action to Prasad Bhunje',
+    'Check and repair the inquiry pipeline stages and student admission records',
     'Show me enrolled students and get a complete database snapshot',
     "What is today's Nifty trend and key institutional support/resistance levels?",
     "Update Monika Patil's batch to Pro Trader Morning and set fees paid to 15000",
@@ -298,23 +299,46 @@ export const AiCenterView: React.FC<AiCenterViewProps> = ({
                 <div className="flex items-center justify-between text-[10px] opacity-85 mb-1.5 font-semibold gap-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span>{msg.sender === 'user' ? '👤 Prasad Sir' : '🕯️ SSMI Executive AI'}</span>
-                    {msg.sender === 'ai' && (
-                      <span
-                        className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold border ${
-                          msg.actions && msg.actions.some(a => a.toolName !== 'googleSearch')
-                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                            : msg.sources && msg.sources.length > 0
-                            ? 'bg-blue-50 text-blue-800 border-blue-200'
-                            : 'bg-indigo-50 text-indigo-800 border-indigo-200'
-                        }`}
-                      >
-                        {msg.actions && msg.actions.some(a => a.toolName !== 'googleSearch')
-                          ? '🗄️ Verified CRM Database'
-                          : msg.sources && msg.sources.length > 0
-                          ? '🌐 Google Search Grounded'
-                          : '🧠 AI Reasoning'}
-                      </span>
-                    )}
+                    {msg.sender === 'ai' && (() => {
+                      const primaryAct = msg.actions?.find(a => a.toolName !== 'googleSearch');
+                      const opType = primaryAct?.operationType;
+                      const isConfirm = primaryAct?.awaitingConfirmation;
+                      const badgeLabel = isConfirm
+                        ? '⚠️ Confirm Deletion'
+                        : opType === 'search'
+                        ? '🔍 Searching Records'
+                        : opType === 'add'
+                        ? '➕ Record Added'
+                        : opType === 'update'
+                        ? '✏️ Record Updated'
+                        : opType === 'convert'
+                        ? '🔄 Lead Converted'
+                        : opType === 'delete'
+                        ? '🗑️ Record Deleted'
+                        : opType === 'report'
+                        ? '📊 Live CRM Report'
+                        : primaryAct
+                        ? '🗄️ Verified CRM Database'
+                        : msg.sources && msg.sources.length > 0
+                        ? '🌐 Google Search Grounded'
+                        : '🧠 Gemini AI Response';
+                      const badgeStyle = isConfirm
+                        ? 'bg-amber-50 text-amber-800 border-amber-300'
+                        : opType === 'delete'
+                        ? 'bg-rose-50 text-rose-800 border-rose-200'
+                        : opType === 'search' || opType === 'report'
+                        ? 'bg-sky-50 text-sky-800 border-sky-200'
+                        : primaryAct
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        : msg.sources && msg.sources.length > 0
+                        ? 'bg-blue-50 text-blue-800 border-blue-200'
+                        : 'bg-indigo-50 text-indigo-800 border-indigo-200';
+                      return (
+                        <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold border ${badgeStyle}`}>
+                          {badgeLabel}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     {msg.sender === 'ai' && (
@@ -347,7 +371,13 @@ export const AiCenterView: React.FC<AiCenterViewProps> = ({
                       {msg.actions?.map((act, ai) => (
                         <div
                           key={ai}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-extrabold"
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-extrabold ${
+                            act.awaitingConfirmation
+                              ? 'bg-amber-50 border-amber-300 text-amber-900'
+                              : act.operationType === 'delete'
+                              ? 'bg-rose-50 border-rose-200 text-rose-800'
+                              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                          }`}
                         >
                           <span>{act.actionLabel || `✅ ${act.toolName}`}</span>
                           <span className="font-mono text-[9px] text-emerald-600 bg-white px-1.5 py-0.2 rounded border border-emerald-200">
@@ -366,6 +396,37 @@ export const AiCenterView: React.FC<AiCenterViewProps> = ({
                           </div>
                         )}
                     </div>
+
+                    {msg.actions
+                      ?.filter(act => Boolean(act.awaitingConfirmation))
+                      .map((act, confIdx) => (
+                        <div
+                          key={`aiconfirm-${confIdx}`}
+                          className="p-3 rounded-xl bg-rose-50/90 border border-rose-200 text-rose-950 space-y-2 shadow-2xs"
+                        >
+                          <div className="text-[11px] font-extrabold flex items-center gap-1.5 text-rose-800">
+                            <span>⚠️ Safety Check: Permanent Record Deletion</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={isLoading}
+                              onClick={() => executeQuery(act.confirmCommand || `confirm delete ${act.targetRecordName || ''}`)}
+                              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs disabled:opacity-50"
+                            >
+                              <span>🗑️ Confirm Delete {act.targetRecordName ? `"${act.targetRecordName}"` : ''}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isLoading}
+                              onClick={() => setInput('')}
+                              className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-[11px] font-bold cursor-pointer transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ))}
 
                     {msg.actions
                       ?.filter(act => Boolean(act.actionCard))
@@ -591,12 +652,37 @@ export const AiCenterView: React.FC<AiCenterViewProps> = ({
             ))}
           </div>
 
+          {smartSuggestions.length > 0 && (
+            <div className="px-3.5 py-1.5 bg-indigo-50/90 border-t border-indigo-200/80 flex items-center gap-1.5 overflow-x-auto no-scrollbar whitespace-nowrap">
+              <span className="text-[10px] font-extrabold text-indigo-700 shrink-0">
+                ✨ Auto-Complete (Tab):
+              </span>
+              {smartSuggestions.map((sug, sIdx) => (
+                <button
+                  key={sIdx}
+                  type="button"
+                  onClick={() => setInput(sug)}
+                  className="px-2 py-0.5 rounded-md bg-white hover:bg-indigo-600 text-indigo-800 hover:text-white border border-indigo-200 text-[10px] font-bold transition-colors cursor-pointer shrink-0 shadow-2xs"
+                  title="Click to complete sentence (or press Tab in input)"
+                >
+                  {sug}
+                </button>
+              ))}
+            </div>
+          )}
+
           <form onSubmit={handleSend} className="p-3.5 bg-white border-t border-slate-200 flex gap-2">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Command in English, Hindi, or Marathi (e.g., 'add lead Rahul 9876543210 F&O', 'what is Nifty 50 today?')..."
+              onKeyDown={(e) => {
+                if (e.key === 'Tab' && smartSuggestions.length > 0) {
+                  e.preventDefault();
+                  setInput(smartSuggestions[0]);
+                }
+              }}
+              placeholder="Ask anything or type shorthand (e.g., 'Rahul 9876543210 F&O', 'Monika 15000', 'what is Nifty 50 today?')..."
               disabled={isLoading}
               className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-indigo-600 disabled:opacity-60"
             />

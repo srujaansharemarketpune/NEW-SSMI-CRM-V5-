@@ -137,14 +137,7 @@ export const WorkspaceHub: React.FC<WorkspaceHubProps> = ({
     getGoogleSheetWebhookUrl()
   );
 
-  const [isSheetsConnected, setIsSheetsConnected] = useState<boolean>(() => {
-    try {
-      const stored = localStorage.getItem('ssm_sheets_connected_status');
-      return stored === null ? true : stored === 'true';
-    } catch {
-      return true;
-    }
-  });
+  const [isSheetsConnected, setIsSheetsConnected] = useState<boolean>(true);
 
   const [isConnectingSheets, setIsConnectingSheets] = useState<boolean>(false);
   const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
@@ -520,9 +513,6 @@ export const WorkspaceHub: React.FC<WorkspaceHubProps> = ({
     if (isSheetsConnected) {
       // Disconnect: reset connection state and clear badge without wiping URL
       setIsSheetsConnected(false);
-      try {
-        localStorage.setItem('ssm_sheets_connected_status', 'false');
-      } catch {}
       setSheetSyncNotice('⚪ Disconnected from Google Sheets. Destination unlinked.');
       return;
     }

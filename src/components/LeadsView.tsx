@@ -27,7 +27,37 @@ interface LeadsViewProps {
   onUpdateLeadStage: (leadId: string, newStage: LeadStage) => void;
   onOpenWaStudioForContact: (type: 'student' | 'lead', id: string, scenarioHint?: string) => void;
   onOpenGoogleSheetsExport?: () => void;
+  onRepairPipeline?: () => void;
 }
+
+const resolveCanonicalStage = (rawStage?: string): LeadStage => {
+  const clean = String(rawStage || '').trim();
+  if (LEAD_STAGES.includes(clean as LeadStage)) {
+    return clean as LeadStage;
+  }
+  const lower = clean.toLowerCase();
+  if (!lower || lower === 'new' || lower.includes('new enquir') || lower.includes('new inquir') || lower === 'open' || lower === 'pending') {
+    return 'New Enquiry';
+  }
+  if (lower.includes('contact') || lower.includes('called')) return 'Contacted';
+  if (lower.includes('demo attend') || lower.includes('attended')) return 'Demo Attended';
+  if (lower.includes('demo')) return 'Demo Scheduled';
+  if (lower.includes('future') || lower.includes('later')) return 'Future Follow-up';
+  if (lower.includes('follow') || lower.includes('call back')) return 'Follow-up Required';
+  if (lower.includes('hot') || lower.includes('interested') || lower.includes('warm') || lower.includes('counsel') || lower.includes('fee')) {
+    return !lower.includes('not interested') ? 'Interested' : 'Not Interested';
+  }
+  if (lower.includes('convert') || lower.includes('admit') || lower.includes('enrol') || lower.includes('confirm')) {
+    return 'Admission Confirmed';
+  }
+  if (lower.includes('lost') || lower.includes('closed')) {
+    return 'Lost';
+  }
+  if (lower.includes('not interested')) {
+    return 'Not Interested';
+  }
+  return 'New Enquiry';
+};
 
 export const LeadsView: React.FC<LeadsViewProps> = ({
   state,
@@ -37,7 +67,8 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
   onDeleteLead,
   onUpdateLeadStage,
   onOpenWaStudioForContact,
-  onOpenGoogleSheetsExport
+  onOpenGoogleSheetsExport,
+  onRepairPipeline
 }) => {
   const [subView, setSubView] = useState<'kanban' | 'table' | 'followups' | 'playbook'>('kanban');
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,20 +88,21 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
     return Boolean(enrolledStu) || lead.isConverted === true || lead.stage === 'Admission Confirmed';
   };
 
-  // Filter leads
+  // Filter leads (using canonical stage so no lead is ever orphaned from the 10-stage pipeline)
   const filteredLeads = state.leads.filter(l => {
+    const canonicalStage = resolveCanonicalStage(l.stage);
     if (courseFilter && l.course !== courseFilter) return false;
-    if (stageFilter && l.stage !== stageFilter) return false;
+    if (stageFilter && canonicalStage !== stageFilter) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase().trim();
-      const hay = `${l.name} ${l.phone} ${l.email} ${l.locality} ${l.course} ${l.stage} ${l.objection} ${l.notes}`.toLowerCase();
+      const hay = `${l.name} ${l.phone} ${l.email} ${l.locality} ${l.course} ${canonicalStage} ${l.stage} ${l.objection} ${l.notes}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
 
   const dueFollowups = state.leads.filter(
-    l => !['Admission Confirmed', 'Lost', 'Not Interested'].includes(l.stage)
+    l => !['Admission Confirmed', 'Lost', 'Not Interested'].includes(resolveCanonicalStage(l.stage))
   );
 
   return (
@@ -142,6 +174,16 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
             </button>
           )}
 
+          {onRepairPipeline && (
+            <button
+              onClick={onRepairPipeline}
+              className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-all"
+              title="Audit and repair inquiry pipeline stages and student conversion links"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
+              <span>Check & Repair Pipeline</span>
+            </button>
+          )}
           <button
             onClick={() => onOpenLeadModal()}
             className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-xs cursor-pointer transition-all"
@@ -244,7 +286,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
         <div className="overflow-x-auto pb-4">
           <div className="flex gap-3 min-w-[2200px]">
             {LEAD_STAGES.map((stage) => {
-              const cards = filteredLeads.filter(l => l.stage === stage);
+              const cards = filteredLeads.filter(l => resolveCanonicalStage(l.stage) === stage);
               return (
                 <div
                   key={stage}
@@ -312,7 +354,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({
 
                             {/* Stage Selector */}
                             <select
-                              value={l.stage}
+                              value={resolveCanonicalStage(l.stage)}
                               onChange={(e) => onUpdateLeadStage(l.id, e.target.value as LeadStage)}
                               className="w-full px-2 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px] sm:text-[10px] text-slate-700 focus:outline-none"
                             >

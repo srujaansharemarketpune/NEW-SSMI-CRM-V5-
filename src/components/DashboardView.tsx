@@ -167,37 +167,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   }, []);
 
-  // Load persisted widget layout from ssm_dashboard_layout_v1
-  const [widgets, setWidgets] = useState<WidgetConfig[]>(() => {
-    try {
-      const saved =
-        localStorage.getItem(LAYOUT_STORAGE_KEY) ||
-        localStorage.getItem('ssm_dashboard_layout_v2');
-      if (saved) {
-        const parsed = JSON.parse(saved) as WidgetConfig[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const merged = [...parsed];
-          DEFAULT_WIDGET_LAYOUT.forEach((def) => {
-            if (!merged.some((w) => w.id === def.id)) {
-              merged.push(def);
-            }
-          });
-          return merged;
-        }
-      }
-    } catch {
-      // Fallback to default layout
-    }
-    return DEFAULT_WIDGET_LAYOUT;
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(widgets));
-    } catch {
-      // Ignore storage quota errors
-    }
-  }, [widgets]);
+  const [widgets, setWidgets] = useState<WidgetConfig[]>(() => DEFAULT_WIDGET_LAYOUT);
 
   const updateWidget = (id: WidgetId, patch: Partial<WidgetConfig>) => {
     setWidgets((prev) => prev.map((w) => (w.id === id ? { ...w, ...patch } : w)));
@@ -267,11 +237,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const resetLayout = () => {
     setWidgets(DEFAULT_WIDGET_LAYOUT);
-    try {
-      localStorage.removeItem(LAYOUT_STORAGE_KEY);
-    } catch {
-      // ignore
-    }
   };
 
   // Active non-archived records

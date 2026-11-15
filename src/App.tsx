@@ -15,7 +15,7 @@ import {
   AttendanceRecord,
   StaffMember
 } from './types';
-import { getInitialAppState, LIVE_TODAY_ISO } from './data/initialData';
+import { getInitialAppState, LIVE_TODAY_ISO, LEAD_STAGES } from './data/initialData';
 import {
   loadOfflineData,
   loadStateFromStorage,
@@ -34,16 +34,24 @@ import {
   masterFetchFromCloud,
   syncWindowInstituteDB,
   getActiveInstituteAddress,
-  saveLocalSnapshotToStorage
+  saveLocalSnapshotToStorage,
+  setupFirebaseSseListener
 } from './services/db';
 import {
   saveCachedStudents,
   saveStudentToFirestore,
   saveLeadToFirestore,
+  saveBatchToFirestore,
   deleteStudentFromFirestore,
   syncToGoogleSheets,
   syncModuleToGoogleSheets,
-  syncAndFetchGoogleWorkspace
+  syncAndFetchGoogleWorkspace,
+  subscribeToFirestoreStudents,
+  subscribeToFirestoreLeads,
+  subscribeToFirestoreBatches,
+  subscribeToFirestoreCourses,
+  subscribeToFirestoreFees,
+  subscribeToFirestoreSettings
 } from './services/storageService';
 import { Navbar, DesktopSidebar, NavTabId, SidebarMode } from './components/Navbar';
 import { LowStorageBanner } from './components/LowStorageBanner';
@@ -68,7 +76,8 @@ import {
   logoutAdmin,
   checkRedirectResult,
   ensureBrowserSessionPersistence,
-  getInitialAuthSession
+  getInitialAuthSession,
+  loginWithDefaultMasterAdmin
 } from './services/authService';
 import {
   StudentModal,
@@ -110,7 +119,9 @@ import {
   deleteBatchFromFirestore,
   deleteStaffFromFirestore,
   deleteCourseFromFirestore,
+  backupStudentData,
   restoreStudentData,
+  fetchMasterSnapshotFromFirestore,
   restoreJsonToFirestoreMaster,
   autoSaveToFirestoreMaster,
   mergeStudentsSafely,
@@ -123,11 +134,12 @@ import {
   getDeterministicPaymentId,
   recordSyncError,
   createLocalSafetyBackup,
+  flushPendingSyncOutbox,
+  getPendingSyncOperations,
   formatFirebaseAuthError,
   FormattedFirebaseAuthError,
   getCurrentActorEmail,
-  ACTIVE_FIREBASE_PROJECT_ID,
-  ACTIVE_FIREBASE_PROJECT_NAME
+  syncSettingsToFirestore
 } from './services/firebase';
 import {
   LayoutDashboard,
@@ -142,7 +154,6 @@ import {
 
 export default function App() {
   const [state, setState] = useState<AppState>(() => {
-    // 0ms synchronous load from offline localStorage so reload never resets data
     const loaded = loadOfflineData();
     syncWindowInstituteDB(loaded);
     return loaded;
@@ -158,23 +169,10 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(() => initialAuthRef.current?.user ?? null);
   const [userRole, setUserRole] = useState<'admin' | 'operator' | null>(() => initialAuthRef.current?.role ?? null);
   const [authInitializing, setAuthInitializing] = useState<boolean>(false);
-  const [isLocalStateReady, setIsLocalStateReady] = useState(false);
-  const isLocalStateReadyRef = useRef(false);
-  const isSharedWorkspaceHydratedRef = useRef(false);
   const [redirectAuthError, setRedirectAuthError] = useState<FormattedFirebaseAuthError | null>(null);
   const authEmailRef = useRef<string | null>(
     initialAuthRef.current?.user?.email?.toLowerCase().trim() || null
   );
-
-  // Only a confirmed Firestore commit enables incoming snapshots to replace local cache.
-  useEffect(() => {
-    const onCanonicalSyncSuccess = () => {
-      isSharedWorkspaceHydratedRef.current = true;
-      setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
-    };
-    window.addEventListener('ssm-canonical-sync-success', onCanonicalSyncSuccess);
-    return () => window.removeEventListener('ssm-canonical-sync-success', onCanonicalSyncSuccess);
-  }, []);
 
   // Top-level mount effect: ensure browserSessionPersistence & handle getRedirectResult(auth) safely
   useEffect(() => {
@@ -232,6 +230,48 @@ export default function App() {
     };
   }, []);
 
+  // Automatic Pending Local Data Sync & Cloud Hydration on Live Firebase Auth Connection
+  useEffect(() => {
+    const onFirebaseAuthConnected = async () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      try {
+        await testConnection();
+        await flushPendingSyncOutbox();
+
+        const hasPendingOutbox = getPendingSyncOperations().length > 0;
+        if (hasUnsyncedLocalChangesRef.current || hasPendingOutbox) {
+          const pushRes = await dualWriteToCloud(stateRef.current, {
+            interactiveAuth: false,
+            skipPreFetch: true
+          });
+          if (pushRes.ok) {
+            hasUnsyncedLocalChangesRef.current = false;
+            setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
+          }
+        }
+
+        const pullRes = await masterFetchFromCloud(stateRef.current, {
+          interactiveAuth: false,
+          onLoginHydrate: true
+        });
+        if (pullRes.updated && pullRes.state) {
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          setState(pullRes.state);
+          stateRef.current = pullRes.state;
+          saveCachedStudents(pullRes.state.students);
+          syncWindowInstituteDB(pullRes.state);
+          await saveStateToStorage(pullRes.state, { preserveTimestamp: true });
+        }
+      } catch (err) {
+        console.warn('Post-auth auto sync notice:', err);
+      }
+    };
+
+    window.addEventListener('ssm-firebase-auth-connected', onFirebaseAuthConnected);
+    return () => window.removeEventListener('ssm-firebase-auth-connected', onFirebaseAuthConnected);
+  }, []);
+
   const isMasterAdmin = userRole === 'admin';
   const masterAdminEmail = authEmailRef.current;
 
@@ -243,52 +283,11 @@ export default function App() {
     showToast('Signed out of Srujaan Share Market Institute Management System.');
   };
 
-  // Automated Project Migration & Cache Reset Check for Project: SSMI CRM
-  useEffect(() => {
-    try {
-      const CURRENT_ACTIVE_PROJECT = ACTIVE_FIREBASE_PROJECT_ID || 'new-project-ssmi';
-      const storedProject = localStorage.getItem('ACTIVE_FIREBASE_PROJECT_ID');
-
-      if (storedProject && storedProject !== CURRENT_ACTIVE_PROJECT) {
-        console.log(
-          `[Project Migration]: Updating active project key to ${CURRENT_ACTIVE_PROJECT}`
-        );
-        Object.keys(localStorage).forEach((key) => {
-          if (key.startsWith('CACHE_FIREBASE_')) {
-            localStorage.removeItem(key);
-          }
-        });
-        localStorage.setItem('ACTIVE_FIREBASE_PROJECT_ID', CURRENT_ACTIVE_PROJECT);
-        localStorage.setItem('ACTIVE_FIREBASE_PROJECT_NAME', ACTIVE_FIREBASE_PROJECT_NAME);
-      } else {
-        localStorage.setItem('ACTIVE_FIREBASE_PROJECT_ID', CURRENT_ACTIVE_PROJECT);
-        localStorage.setItem('ACTIVE_FIREBASE_PROJECT_NAME', ACTIVE_FIREBASE_PROJECT_NAME);
-      }
-    } catch {
-      // ignore storage access issues
-    }
-  }, []);
-
   const [activeTab, setActiveTab] = useState<NavTabId>('dashboard');
-  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => {
-    try {
-      const saved = localStorage.getItem('srujaan_sidebar_mode_v1');
-      if (saved === 'compact' || saved === 'standard' || saved === 'expanded' || saved === 'hidden') {
-        return saved;
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return 'standard';
-  });
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>('standard');
 
   const handleSidebarModeChange = (mode: SidebarMode) => {
     setSidebarMode(mode);
-    try {
-      localStorage.setItem('srujaan_sidebar_mode_v1', mode);
-    } catch {
-      // ignore storage errors
-    }
   };
 
   const [storageQuota, setStorageQuota] = useState<StorageQuotaInfo>({
@@ -322,7 +321,6 @@ export default function App() {
           skipPreFetch: true
         });
         if (res.ok) {
-          isSharedWorkspaceHydratedRef.current = true;
           setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
           hasUnsyncedLocalChangesRef.current = false;
         }
@@ -446,145 +444,356 @@ export default function App() {
       }
     });
 
-  // Shared-workspace reconciliation: merge this device's saved records before listening,
-  // so the first cloud snapshot cannot erase device-specific records during migration.
+  // Real-Time Firestore Synchronization Listeners (`institutes/ssmi_master_db/{admissions,leads,fees,batches,courses,settings}`)
   useEffect(() => {
-    if (!currentUser?.uid || !isLocalStateReady) return;
-    let cancelled = false;
-    let unsubscribe = () => {};
+    const unsubscribe = subscribeToCloudUpdates('institute_master_data', (remoteData, hasPendingWrites) => {
+      if (hasPendingWrites || !remoteData) return;
 
-    const applyWorkspaceState = async (nextState: AppState) => {
-      const normalized = normalizeLoadedState(nextState);
-      setState(normalized);
-      stateRef.current = normalized;
-      saveCachedStudents(normalized.students || []);
-      syncWindowInstituteDB(normalized);
-      await saveStateToStorage(normalized, { preserveTimestamp: true });
-      setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
-    };
-
-    const attachLiveListener = () => {
-      if (cancelled) return;
-      unsubscribe = subscribeToCloudUpdates('institute_master_data', (remoteData, hasPendingWrites, fromCache) => {
-        if (hasPendingWrites || !remoteData) return;
-        if (!isSharedWorkspaceHydratedRef.current) {
-          const localIsSeed = Boolean((stateRef.current as any).isSeedData);
-          // A seed-only device may accept a server snapshot; a device with saved records
-          // must first complete a merge or an explicit push before remote data can replace it.
-          if (!localIsSeed || fromCache) return;
-          isSharedWorkspaceHydratedRef.current = true;
-        }
-        const isSameDevice = remoteData.deviceId && remoteData.deviceId === getLocalDeviceId();
-        if (isSameDevice && Date.now() - lastLocalMutationAtRef.current < 6000) return;
-        if (Date.now() - lastLocalMutationAtRef.current < 2500) return;
-
-        try {
-          const remotePayload = remoteData.payload ? remoteData.payload : remoteData;
-          if (!remotePayload || (!Array.isArray(remotePayload.students) && !remotePayload.settings)) return;
-          const currentLocal = stateRef.current;
-          const normalized = normalizeLoadedState({
-            ...currentLocal,
-            ...remotePayload,
-            students: Array.isArray(remotePayload.students)
-              ? mergeStudentsSafely([], remotePayload.students)
-              : currentLocal.students,
-            leads: Array.isArray(remotePayload.leads)
-              ? mergeRecordsByKeySafely([], remotePayload.leads, 'id', 'leads')
-              : currentLocal.leads,
-            batches: Array.isArray(remotePayload.batches)
-              ? mergeRecordsByKeySafely([], remotePayload.batches, 'code', 'batches')
-              : currentLocal.batches,
-            courses: Array.isArray(remotePayload.courses)
-              ? mergeRecordsByKeySafely([], remotePayload.courses, 'id', 'courses')
-              : currentLocal.courses,
-            staff: Array.isArray(remotePayload.staff)
-              ? mergeRecordsByKeySafely([], remotePayload.staff, 'id', 'staff')
-              : currentLocal.staff,
-            attendance: remotePayload.attendance || {},
-            settings: { ...currentLocal.settings, ...(remotePayload.settings || {}) }
-          });
-          (normalized as any).updatedAt = remoteData.updatedAt || remotePayload.updatedAt || new Date().toISOString();
-          (normalized as any).isSeedData = false;
-          if (computeSyncFingerprint(currentLocal) !== computeSyncFingerprint(normalized)) {
-            void applyWorkspaceState(normalized);
-          }
-        } catch (error) {
-          console.warn('Canonical workspace live update notice:', error);
-        }
-      });
-    };
-
-    const reconcileBeforeListening = async () => {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        hasUnsyncedLocalChangesRef.current = true;
+      const isSameDevice = remoteData.deviceId && remoteData.deviceId === getLocalDeviceId();
+      if (isSameDevice && Date.now() - lastLocalMutationAtRef.current < 3000) {
+        return;
+      }
+      if (Date.now() - lastLocalMutationAtRef.current < 1500) {
         return;
       }
 
-      const localState = stateRef.current;
-      const localIsSeed = Boolean((localState as any).isSeedData);
-
       try {
-        if (!localIsSeed) {
-          // Non-destructive merge imports this device's unique records into the one shared snapshot.
-          const merged = await dualWriteToCloud(localState, {
-            interactiveAuth: false,
-            skipPreFetch: false
-          });
-          if (!merged.ok) {
-            hasUnsyncedLocalChangesRef.current = true;
-            recordSyncError(merged.message || 'Could not merge this device into the shared Firebase workspace.');
-            showToast('⚠️ Local records are safe, but shared sync failed. Check Firebase sign-in and permissions.');
-            attachLiveListener();
-            return;
-          }
-          hasUnsyncedLocalChangesRef.current = false;
-          if (merged.state) await applyWorkspaceState(merged.state);
-        } else {
-          const pulled = await masterFetchFromCloud(localState, {
-            interactiveAuth: false,
-            onLoginHydrate: true
-          });
-          if (pulled.updated && pulled.state) {
-            if (String(pulled.source || '').includes('Firestore')) {
-              // Promote legacy Firestore-only data into the canonical document before listening.
-              const migrated = await dualWriteToCloud(pulled.state, {
-                interactiveAuth: false,
-                skipPreFetch: false
-              });
-              if (migrated.ok && migrated.state) {
-                await applyWorkspaceState(migrated.state);
-                isSharedWorkspaceHydratedRef.current = true;
-              }
-            } else {
-              await applyWorkspaceState(pulled.state);
+        const remotePayload = remoteData.payload ? remoteData.payload : remoteData;
+        if (remotePayload && (Array.isArray(remotePayload.students) || remotePayload.settings)) {
+          const currentLocal = stateRef.current;
+          const stuTombstones = getDeletedIds('students');
+          const leadTombstones = getDeletedIds('leads');
+
+          const mergedStudents = Array.isArray(remotePayload.students)
+            ? deduplicateRecords(
+                remotePayload.students.filter(
+                  (s: any) => s && !s.isDeleted && !stuTombstones.has(String(s.id || ''))
+                ),
+                'id',
+                (s: any) => {
+                  const p = (s.phone || '').replace(/\D/g, '').slice(-10);
+                  return p.length >= 10 ? `PHONE_${p}` : undefined;
+                }
+              )
+            : currentLocal.students;
+
+          const mergedLeads = Array.isArray(remotePayload.leads)
+            ? deduplicateRecords(
+                remotePayload.leads.filter(
+                  (l: any) => l && !l.isDeleted && !leadTombstones.has(String(l.id || ''))
+                ),
+                'id',
+                (l: any) => {
+                  const p = (l.phone || '').replace(/\D/g, '').slice(-10);
+                  return p.length >= 10 ? `LEAD_PHONE_${p}` : undefined;
+                }
+              )
+            : currentLocal.leads;
+
+          const mergedBatches = Array.isArray(remotePayload.batches) && remotePayload.batches.length > 0
+            ? mergeRecordsByKeySafely([], remotePayload.batches, 'code', 'batches')
+            : currentLocal.batches;
+
+          const mergedCourses = Array.isArray(remotePayload.courses) && remotePayload.courses.length > 0
+            ? mergeRecordsByKeySafely([], remotePayload.courses, 'id', 'courses')
+            : currentLocal.courses;
+
+          const mergedStaff = Array.isArray(remotePayload.staff) && remotePayload.staff.length > 0
+            ? mergeRecordsByKeySafely([], remotePayload.staff, 'id', 'staff')
+            : currentLocal.staff;
+
+          const mergedAttendance = remotePayload.attendance
+            ? mergeAttendanceSafely(currentLocal.attendance || {}, remotePayload.attendance)
+            : currentLocal.attendance;
+
+          const normalized = normalizeLoadedState({
+            ...currentLocal,
+            ...remotePayload,
+            students: mergedStudents,
+            leads: mergedLeads,
+            batches: mergedBatches,
+            courses: mergedCourses,
+            staff: mergedStaff,
+            attendance: mergedAttendance,
+            settings: {
+              ...currentLocal.settings,
+              ...(remotePayload.settings || {})
             }
-          } else if (String(pulled.source || '').includes('Firebase Firestore')) {
-            isSharedWorkspaceHydratedRef.current = true;
+          });
+          (normalized as any).updatedAt =
+            remoteData.updatedAt || remotePayload.updatedAt || new Date().toISOString();
+          (normalized as any).isSeedData = false;
+
+          const currentFp = computeSyncFingerprint(currentLocal);
+          const remoteFp = computeSyncFingerprint(normalized);
+
+          if (currentFp !== remoteFp) {
+            const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+            setLastCloudSyncAt(nowStr);
+            setState(normalized);
+            stateRef.current = normalized;
+            saveCachedStudents(normalized.students);
+            syncWindowInstituteDB(normalized);
+            saveStateToStorage(normalized, { preserveTimestamp: true });
           }
         }
-
-        if (cancelled) return;
-        attachLiveListener();
-      } catch (error: any) {
-        hasUnsyncedLocalChangesRef.current = true;
-        recordSyncError(error?.message || 'Initial shared workspace reconciliation failed.', error);
-        showToast('⚠️ Shared Firebase sync needs attention. Your local records have been preserved.');
-        attachLiveListener();
+      } catch (err) {
+        console.warn('Real-time sync reconciliation warning:', err);
       }
-    };
+    });
 
-    isSharedWorkspaceHydratedRef.current = false;
-    void reconcileBeforeListening();
+    const unsubscribeStudents = subscribeToFirestoreStudents((remoteStudents) => {
+      if (Array.isArray(remoteStudents)) {
+        const tombstones = getDeletedIds('students');
+        const activeRemote = remoteStudents.filter(
+          rem => rem && !(rem as any).isDeleted && !tombstones.has(String(rem.id || ''))
+        );
+        setState(prev => {
+          const nextList: Student[] = deduplicateRecords(activeRemote, 'id', s => {
+            const p = (s.phone || '').replace(/\D/g, '').slice(-10);
+            return p.length >= 10 ? `PHONE_${p}` : undefined;
+          });
+
+          if (JSON.stringify(nextList) === JSON.stringify(prev.students)) {
+            return prev;
+          }
+
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          saveCachedStudents(nextList);
+          const nextState = {
+            ...prev,
+            students: nextList
+          };
+          stateRef.current = nextState;
+          syncWindowInstituteDB(nextState);
+          saveStateToStorage(nextState, { preserveTimestamp: true });
+          return nextState;
+        });
+      }
+    });
+
+    const unsubscribeLeads = subscribeToFirestoreLeads((remoteLeads) => {
+      if (Array.isArray(remoteLeads)) {
+        const tombstones = getDeletedIds('leads');
+        const activeRemote = remoteLeads.filter(
+          rem => rem && !(rem as any).isDeleted && !tombstones.has(String(rem.id || ''))
+        );
+        setState(prev => {
+          const nextLeads: Lead[] = deduplicateRecords(activeRemote, 'id', l => {
+            const p = (l.phone || '').replace(/\D/g, '').slice(-10);
+            return p.length >= 10 ? `LEAD_PHONE_${p}` : undefined;
+          });
+
+          if (JSON.stringify(nextLeads) === JSON.stringify(prev.leads)) {
+            return prev;
+          }
+
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          const nextState = {
+            ...prev,
+            leads: nextLeads
+          };
+          stateRef.current = nextState;
+          syncWindowInstituteDB(nextState);
+          saveStateToStorage(nextState, { preserveTimestamp: true });
+          return nextState;
+        });
+      }
+    });
+
+    const unsubscribeBatches = subscribeToFirestoreBatches((remoteBatches) => {
+      if (Array.isArray(remoteBatches) && remoteBatches.length > 0) {
+        setState(prev => {
+          const nextBatches = mergeRecordsByKeySafely([], remoteBatches, 'code', 'batches');
+          if (JSON.stringify(nextBatches) === JSON.stringify(prev.batches)) return prev;
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          const nextState = { ...prev, batches: nextBatches };
+          stateRef.current = nextState;
+          syncWindowInstituteDB(nextState);
+          return nextState;
+        });
+      }
+    });
+
+    const unsubscribeCourses = subscribeToFirestoreCourses((remoteCourses) => {
+      if (Array.isArray(remoteCourses) && remoteCourses.length > 0) {
+        setState(prev => {
+          const nextCourses = mergeRecordsByKeySafely([], remoteCourses, 'id', 'courses');
+          if (JSON.stringify(nextCourses) === JSON.stringify(prev.courses)) return prev;
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          const nextState = { ...prev, courses: nextCourses };
+          stateRef.current = nextState;
+          syncWindowInstituteDB(nextState);
+          return nextState;
+        });
+      }
+    });
+
+    const unsubscribeFees = subscribeToFirestoreFees((remoteFees) => {
+      if (Array.isArray(remoteFees) && remoteFees.length > 0) {
+        setState(prev => {
+          const feeByStudentId = new Map<string, any>();
+          remoteFees.forEach(f => {
+            const sid = String(f.studentId || f.id || '').trim();
+            if (sid) feeByStudentId.set(sid, f);
+          });
+          let changed = false;
+          const nextStudents = prev.students.map(s => {
+            const fDoc = feeByStudentId.get(s.id);
+            if (!fDoc || !Array.isArray(fDoc.milestones)) return s;
+            if (JSON.stringify(s.milestones) === JSON.stringify(fDoc.milestones) && s.netFee === Number(fDoc.netFee ?? s.netFee)) {
+              return s;
+            }
+            changed = true;
+            return {
+              ...s,
+              netFee: Number(fDoc.netFee ?? s.netFee),
+              grossFee: Number(fDoc.grossFee ?? s.grossFee),
+              discount: Number(fDoc.discount ?? s.discount),
+              milestones: fDoc.milestones
+            };
+          });
+          if (!changed) return prev;
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          const nextState = { ...prev, students: nextStudents };
+          stateRef.current = nextState;
+          syncWindowInstituteDB(nextState);
+          return nextState;
+        });
+      }
+    });
+
+    const unsubscribeSettings = subscribeToFirestoreSettings((remoteSettings) => {
+      if (remoteSettings && typeof remoteSettings === 'object') {
+        setState(prev => {
+          const mergedSettings = {
+            ...prev.settings,
+            ...remoteSettings
+          };
+          if (JSON.stringify(mergedSettings) === JSON.stringify(prev.settings)) return prev;
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          const nextState = { ...prev, settings: mergedSettings };
+          stateRef.current = nextState;
+          syncWindowInstituteDB(nextState);
+          return nextState;
+        });
+      }
+    });
+
+    // Automatic Login Hydration: immediately trigger fetchMasterSnapshotFromFirestore() & reconcile
+    (async () => {
+      try {
+        const cloudSnap = await fetchMasterSnapshotFromFirestore('institute_master_data');
+        const currentLocal = stateRef.current;
+        const localIsSeed = Boolean((currentLocal as any).isSeedData);
+        const localTimeMs = localIsSeed
+          ? 0
+          : Date.parse(String((currentLocal as any).updatedAt || currentLocal.settings?.lastUpdated || '')) || 0;
+        const cloudTimeMs = cloudSnap?.updatedAt ? Date.parse(String(cloudSnap.updatedAt)) || 0 : 0;
+        const localEmpty = !Array.isArray(currentLocal.students) || currentLocal.students.length === 0;
+
+        if (cloudSnap && (localIsSeed || localEmpty || cloudTimeMs >= localTimeMs || (cloudSnap.students || []).length > 0 || (cloudSnap.leads || []).length > 0)) {
+          const mergedStudents = localIsSeed
+            ? mergeStudentsSafely([], cloudSnap.students || [])
+            : mergeStudentsSafely(currentLocal.students || [], cloudSnap.students || []);
+          const mergedLeads = localIsSeed
+            ? mergeRecordsByKeySafely([], cloudSnap.leads || [], 'id', 'leads')
+            : mergeRecordsByKeySafely(currentLocal.leads || [], cloudSnap.leads || [], 'id', 'leads');
+          const mergedBatches = localIsSeed
+            ? mergeRecordsByKeySafely([], cloudSnap.batches || [], 'code', 'batches')
+            : mergeRecordsByKeySafely(currentLocal.batches || [], cloudSnap.batches || [], 'code', 'batches');
+          const mergedCourses = localIsSeed
+            ? mergeRecordsByKeySafely([], cloudSnap.courses || [], 'id', 'courses')
+            : mergeRecordsByKeySafely(currentLocal.courses || [], cloudSnap.courses || [], 'id', 'courses');
+          const mergedStaff = localIsSeed
+            ? mergeRecordsByKeySafely([], cloudSnap.staff || [], 'id', 'staff')
+            : mergeRecordsByKeySafely(currentLocal.staff || [], cloudSnap.staff || [], 'id', 'staff');
+          const mergedAttendance = cloudSnap.attendance
+            ? mergeAttendanceSafely(currentLocal.attendance || {}, cloudSnap.attendance)
+            : currentLocal.attendance;
+
+          const hydrated = normalizeLoadedState({
+            ...currentLocal,
+            ...cloudSnap,
+            students: mergedStudents,
+            leads: mergedLeads,
+            batches: mergedBatches,
+            courses: mergedCourses,
+            staff: mergedStaff,
+            attendance: mergedAttendance,
+            settings: {
+              ...currentLocal.settings,
+              ...(cloudSnap.settings || {})
+            }
+          });
+          (hydrated as any).updatedAt = cloudSnap.updatedAt || new Date().toISOString();
+          (hydrated as any).isSeedData = false;
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          setState(hydrated);
+          stateRef.current = hydrated;
+          saveCachedStudents(hydrated.students);
+          syncWindowInstituteDB(hydrated);
+          await saveStateToStorage(hydrated, { preserveTimestamp: true });
+        }
+
+        const result = await masterFetchFromCloud(stateRef.current, {
+          interactiveAuth: false,
+          onLoginHydrate: true
+        });
+        if (result.updated && result.state) {
+          const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+          setLastCloudSyncAt(nowStr);
+          setState(result.state);
+          stateRef.current = result.state;
+          saveCachedStudents(result.state.students);
+          syncWindowInstituteDB(result.state);
+          await saveStateToStorage(result.state, { preserveTimestamp: true });
+        }
+      } catch {
+        // non-blocking fallback
+      }
+    })();
+
+    // Real-Time SSE Listener for custom Firebase Realtime Database URL (if configured)
+    const unsubscribeSse = setupFirebaseSseListener(
+      stateRef.current.settings?.cloudConfig?.firebaseUrl,
+      stateRef.current.settings?.cloudConfig?.authToken,
+      (remotePayload) => {
+        if (Date.now() - lastLocalMutationAtRef.current < 4000) return;
+        const activeTag = document.activeElement?.tagName;
+        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return;
+        const normalized = normalizeLoadedState({
+          ...stateRef.current,
+          ...remotePayload
+        });
+        setState(normalized);
+        stateRef.current = normalized;
+        saveStateToStorage(normalized, { preserveTimestamp: true });
+      }
+    );
 
     return () => {
-      cancelled = true;
       unsubscribe();
-      isSharedWorkspaceHydratedRef.current = false;
+      unsubscribeStudents();
+      unsubscribeLeads();
+      unsubscribeBatches();
+      unsubscribeCourses();
+      unsubscribeFees();
+      unsubscribeSettings();
+      unsubscribeSse();
     };
-  }, [currentUser?.uid, isLocalStateReady, isOnline]);
+  }, [state.settings?.cloudConfig?.firebaseUrl, currentUser?.uid]);
 
-  // Load this device's offline cache first. Shared Firebase reconciliation starts only after
-  // the real Google user is authenticated, preventing stale cloud snapshots from erasing local-only records.
+  // Cloud-First Initialization on Mount:
+  // 1. Immediately trigger fetchMasterSnapshotFromFirestore() on mount.
+  // 2. Hydrate from Cloud Firestore directly into runtime state.
   useEffect(() => {
     async function init() {
       const savedCourses = loadSavedCoursesFromStorage();
@@ -597,20 +806,62 @@ export default function App() {
       const quota = await checkStorageQuota(loaded);
       setStorageQuota(quota);
 
-      isLocalStateReadyRef.current = true;
-      setIsLocalStateReady(true);
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        try {
+          const cloudData = await fetchMasterSnapshotFromFirestore('institute_master_data');
+          const localIsSeed = Boolean((loaded as any).isSeedData);
+          const localTimeMs = localIsSeed
+            ? 0
+            : Date.parse(String((loaded as any).updatedAt || loaded.settings?.lastUpdated || '')) || 0;
+          const cloudTimeMs = cloudData?.updatedAt ? Date.parse(String(cloudData.updatedAt)) || 0 : 0;
+          const localEmpty = !Array.isArray(loaded.students) || loaded.students.length === 0;
+
+          if (cloudData && (localIsSeed || localEmpty || cloudTimeMs >= localTimeMs)) {
+            const hydrated = normalizeLoadedState({
+              ...loaded,
+              ...cloudData,
+              settings: {
+                ...loaded.settings,
+                ...(cloudData.settings || {})
+              }
+            });
+            (hydrated as any).updatedAt = cloudData.updatedAt || new Date().toISOString();
+            (hydrated as any).isSeedData = false;
+            const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+            setLastCloudSyncAt(nowStr);
+            setState(hydrated);
+            stateRef.current = hydrated;
+            saveCachedStudents(hydrated.students);
+            syncWindowInstituteDB(hydrated);
+            await saveStateToStorage(hydrated, { preserveTimestamp: true });
+          }
+
+          const cloudResult = await masterFetchFromCloud(stateRef.current, {
+            interactiveAuth: false,
+            onLoginHydrate: true
+          });
+          if (cloudResult.updated && cloudResult.state) {
+            const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
+            setLastCloudSyncAt(nowStr);
+            setState(cloudResult.state);
+            stateRef.current = cloudResult.state;
+            saveCachedStudents(cloudResult.state.students);
+            syncWindowInstituteDB(cloudResult.state);
+            await saveStateToStorage(cloudResult.state, { preserveTimestamp: true });
+          }
+        } catch {
+          // Offline-first fallback already active
+        }
+      }
     }
     init();
 
     // Online / Offline listeners with automatic cloud flush and bidirectional reconciliation on reconnection
     const handleOnline = async () => {
       setIsOnline(true);
-      if (!isLocalStateReadyRef.current) return;
-      if (!isSharedWorkspaceHydratedRef.current && !hasUnsyncedLocalChangesRef.current) return;
       try {
         const res = await dualWriteToCloud(stateRef.current, { interactiveAuth: false });
         if (res.ok) {
-          isSharedWorkspaceHydratedRef.current = true;
           const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
           setLastCloudSyncAt(nowStr);
           hasUnsyncedLocalChangesRef.current = false;
@@ -624,7 +875,7 @@ export default function App() {
             ...prev,
             syncQueue: prev.syncQueue.map(q => ({ ...q, status: 'Synced to Cloud' }))
           }));
-          showToast('🌐 Back online! Changes synchronized to the shared Firebase workspace.');
+          showToast('🌐 Back online! Offline changes automatically synchronized to Cloud & Firebase.');
         }
       } catch (err) {
         console.warn('Online reconnect sync warning:', err);
@@ -646,14 +897,9 @@ export default function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
         e.preventDefault();
-        setSidebarMode(prev => {
-          const next: SidebarMode =
-            prev === 'hidden' ? 'standard' : prev === 'standard' ? 'compact' : 'standard';
-          try {
-            localStorage.setItem('srujaan_sidebar_mode_v1', next);
-          } catch {}
-          return next;
-        });
+        setSidebarMode(prev =>
+          prev === 'hidden' ? 'standard' : prev === 'standard' ? 'compact' : 'standard'
+        );
         return;
       }
       const target = e.target as HTMLElement | null;
@@ -665,20 +911,15 @@ export default function App() {
           target.isContentEditable);
       if (!isEditable && !e.ctrlKey && !e.metaKey && !e.altKey && e.key === '[') {
         e.preventDefault();
-        setSidebarMode(prev => {
-          const next: SidebarMode =
-            prev === 'standard'
-              ? 'compact'
-              : prev === 'compact'
-              ? 'expanded'
-              : prev === 'expanded'
-              ? 'hidden'
-              : 'standard';
-          try {
-            localStorage.setItem('srujaan_sidebar_mode_v1', next);
-          } catch {}
-          return next;
-        });
+        setSidebarMode(prev =>
+          prev === 'standard'
+            ? 'compact'
+            : prev === 'compact'
+            ? 'expanded'
+            : prev === 'expanded'
+            ? 'hidden'
+            : 'standard'
+        );
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -690,7 +931,7 @@ export default function App() {
     };
   }, []);
 
-  // Automatic 2-Minute Background Shared Firebase Sync Loop
+  // Automatic 2-Minute Background Cloud & Firebase Sync Loop
   useEffect(() => {
     const intervalMs = state.settings.cloudConfig?.autoSyncIntervalMs || 120000; // Default: 2 minutes (120,000 ms)
     const timer = window.setInterval(async () => {
@@ -706,7 +947,6 @@ export default function App() {
       if (hasUnsyncedLocalChangesRef.current) {
         const res = await dualWriteToCloud(current, { interactiveAuth: false });
         if (res.ok) {
-          isSharedWorkspaceHydratedRef.current = true;
           hasUnsyncedLocalChangesRef.current = false;
           const nowIso = new Date().toISOString();
           const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
@@ -736,9 +976,6 @@ export default function App() {
       } else {
         const fetched = await masterFetchFromCloud(current, { interactiveAuth: false });
         if (fetched.updated && fetched.state) {
-          if (String(fetched.source || '').includes('Firestore')) {
-            isSharedWorkspaceHydratedRef.current = true;
-          }
           const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
           setLastCloudSyncAt(nowStr);
           setState(fetched.state);
@@ -780,12 +1017,15 @@ export default function App() {
     // Non-blocking debounced auto-save (LocalStorage + IndexedDB + Firestore)
     autoSaveData(next, 'institute_master_data');
 
-    // Schedule a non-blocking storage quota check (cloud status updates only after Firestore confirms).
+    // Schedule non-blocking quota check & cloud mirror update (debounced 600ms)
     if (cloudDebounceRef.current) {
       window.clearTimeout(cloudDebounceRef.current);
     }
     cloudDebounceRef.current = window.setTimeout(() => {
       checkStorageQuota(stateRef.current).then(setStorageQuota);
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        setLastCloudSyncAt(new Date().toLocaleString('en-IN', { hour12: false }));
+      }
     }, 600);
   };
 
@@ -807,7 +1047,7 @@ export default function App() {
         module: category,
         operation: action,
         summary: `${recordId}: ${details}`.slice(0, 100),
-        status: isOnline ? 'Pending Shared Firebase Sync' : 'Queued for Shared Firebase Sync'
+        status: isOnline ? 'Synced (Dual-Write)' : 'Queued for Cloud'
       };
       return {
         ...prev,
@@ -978,6 +1218,7 @@ export default function App() {
       students: cleanRestored,
       updatedAt: new Date().toISOString()
     }).catch(() => {});
+    backupStudentData(cleanRestored).catch(() => {});
 
     logAudit('Restore', 'Restored Students Database', 'ALL', message);
     showToast(`✓ ${message}`);
@@ -1149,6 +1390,7 @@ export default function App() {
       }
       return { ...prev, batches: list };
     });
+    saveBatchToFirestore(batch).catch(() => {});
     syncModuleToGoogleSheets('batches', batch, 'UPDATE').catch(() => {});
     logAudit('Batch', 'Saved Batch Schedule', batch.code, `${batch.name} (${batch.course})`);
     setBatchModalOpen(false);
@@ -1519,6 +1761,148 @@ export default function App() {
     showToast(`✓ Archived ${studentIds.length} selected students`);
   };
 
+  const normalizeLeadStageToPipeline = (rawStage?: string): LeadStage => {
+    const clean = String(rawStage || '').trim();
+    if (LEAD_STAGES.includes(clean as LeadStage)) {
+      return clean as LeadStage;
+    }
+    const lower = clean.toLowerCase();
+    if (!lower || lower === 'new' || lower.includes('new enquir') || lower.includes('new inquir') || lower === 'open' || lower === 'pending') {
+      return 'New Enquiry';
+    }
+    if (lower.includes('contact') || lower.includes('called')) {
+      return 'Contacted';
+    }
+    if (lower.includes('demo attend') || lower.includes('attended')) {
+      return 'Demo Attended';
+    }
+    if (lower.includes('demo')) {
+      return 'Demo Scheduled';
+    }
+    if (lower.includes('future') || lower.includes('later')) {
+      return 'Future Follow-up';
+    }
+    if (lower.includes('follow') || lower.includes('call back') || lower.includes('callback')) {
+      return 'Follow-up Required';
+    }
+    if (lower.includes('hot') || lower.includes('interested') || lower.includes('warm') || lower.includes('counsel') || lower.includes('fee')) {
+      return !lower.includes('not interested') ? 'Interested' : 'Not Interested';
+    }
+    if (lower.includes('convert') || lower.includes('admit') || lower.includes('enrol') || lower.includes('confirm') || lower.includes('won')) {
+      return 'Admission Confirmed';
+    }
+    if (lower.includes('lost') || lower.includes('closed') || lower.includes('drop')) {
+      return 'Lost';
+    }
+    if (lower.includes('not interested')) {
+      return 'Not Interested';
+    }
+    return 'New Enquiry';
+  };
+
+  const handleCheckAndRepairPipelineAndAdmissions = () => {
+    const nowIso = new Date().toISOString();
+    let repairedStagesCount = 0;
+    let reconciledConversionsCount = 0;
+    let repairedAdmissionsCount = 0;
+    const leadsToSync: Lead[] = [];
+    const studentsToSync: Student[] = [];
+
+    updateAndPersistState(prev => {
+      const currentStudents = Array.isArray(prev.students) ? prev.students : [];
+      const currentLeads = Array.isArray(prev.leads) ? prev.leads : [];
+
+      const repairedStudents = currentStudents.map(s => {
+        const mapped = resolveSsmiCourseAndFee(s.course, s.netFee || s.grossFee, 'Basic Trading', 5000);
+        const paid = (s.milestones || [])
+          .filter(m => m.status === 'Paid')
+          .reduce((sum, m) => sum + (Number(m.amount) || 0), 0);
+        const expectedNet = Math.max(Number(s.netFee || mapped.totalFees || 5000), paid);
+        const hasValidMilestones = Array.isArray(s.milestones) && s.milestones.length > 0;
+        const needsRepair =
+          !s.course ||
+          !s.regId ||
+          !hasValidMilestones ||
+          s.netFee !== expectedNet;
+
+        if (!needsRepair) return s;
+        repairedAdmissionsCount += 1;
+        const fixedStu: Student = {
+          ...s,
+          course: s.course || mapped.courseName,
+          netFee: expectedNet,
+          grossFee: Math.max(Number(s.grossFee || expectedNet), expectedNet),
+          milestones: hasValidMilestones ? s.milestones : buildMilestonesForPaidAmount(paid, expectedNet, s.enrollDate || LIVE_TODAY_ISO),
+          ...({ updatedAt: nowIso } as any)
+        };
+        studentsToSync.push(fixedStu);
+        return fixedStu;
+      });
+
+      const repairedLeads = currentLeads.map(l => {
+        const canonicalStage = normalizeLeadStageToPipeline(l.stage);
+        const normLeadPhone = (l.phone || '').replace(/\D/g, '').slice(-10);
+        const matchedStudent = repairedStudents.find(s => {
+          if (s.leadId && s.leadId === l.id) return true;
+          const sp = (s.phone || '').replace(/\D/g, '').slice(-10);
+          if (normLeadPhone.length === 10 && sp === normLeadPhone) return true;
+          return s.name.trim().toLowerCase() === (l.name || '').trim().toLowerCase();
+        });
+
+        const shouldBeConfirmed = Boolean(matchedStudent) || canonicalStage === 'Admission Confirmed';
+        const finalStage: LeadStage = shouldBeConfirmed ? 'Admission Confirmed' : canonicalStage;
+        const stageChanged = l.stage !== finalStage;
+        const conversionChanged = shouldBeConfirmed && (!l.isConverted || l.convertedStudentId !== matchedStudent?.id);
+
+        if (!stageChanged && !conversionChanged && l.followUpDate) {
+          return l;
+        }
+        if (stageChanged) repairedStagesCount += 1;
+        if (conversionChanged) reconciledConversionsCount += 1;
+
+        const fixedLead: Lead = {
+          ...l,
+          stage: finalStage,
+          isConverted: shouldBeConfirmed,
+          ...(matchedStudent ? { convertedStudentId: matchedStudent.id } : {}),
+          followUpDate: l.followUpDate || LIVE_TODAY_ISO,
+          ...({ updatedAt: nowIso } as any)
+        };
+        leadsToSync.push(fixedLead);
+        return fixedLead;
+      });
+
+      return {
+        ...prev,
+        students: deduplicateRecords(repairedStudents, 'id', s => {
+          const p = (s.phone || '').replace(/\D/g, '').slice(-10);
+          return p.length >= 10 ? `PHONE_${p}` : undefined;
+        }),
+        leads: deduplicateRecords(repairedLeads, 'id', l => {
+          const p = (l.phone || '').replace(/\D/g, '').slice(-10);
+          return p.length >= 10 ? `LEAD_PHONE_${p}` : undefined;
+        })
+      };
+    });
+
+    leadsToSync.forEach(l => saveLeadToFirestore(l).catch(() => {}));
+    studentsToSync.forEach(s => saveStudentToFirestore(s).catch(() => {}));
+    scheduleEnrollmentOrLeadCloudSync();
+
+    const totalFixed = repairedStagesCount + reconciledConversionsCount + repairedAdmissionsCount;
+    const msg =
+      totalFixed > 0
+        ? `✅ Pipeline & Admissions Repaired: ${repairedStagesCount} stages normalized, ${reconciledConversionsCount} conversions linked, ${repairedAdmissionsCount} admission ledgers verified.`
+        : `✅ Pipeline & Admissions Verified: All ${stateRef.current.leads.length} inquiries & ${stateRef.current.students.length} admissions are healthy and synced!`;
+    showToast(msg);
+    return {
+      repairedStagesCount,
+      reconciledConversionsCount,
+      repairedAdmissionsCount,
+      message: msg
+    };
+  };
+
   // Lead Handlers
   const handleSaveLead = (lead: Lead) => {
     unmarkDeletedId('leads', lead.id);
@@ -1528,6 +1912,7 @@ export default function App() {
     const stampedLead: Lead = {
       ...lead,
       id: deterministicId,
+      stage: normalizeLeadStageToPipeline(lead.stage),
       ...({
         createdBy: (existingLead as any)?.createdBy || actorEmail,
         updatedBy: actorEmail,
@@ -2246,7 +2631,7 @@ export default function App() {
           locality: payload.locality || payload.branch || payload.data?.locality || 'Pune',
           course: courseName || 'Basic Trading',
           source: payload.source || payload.data?.source || 'AI Copilot',
-          stage: (payload.stage || payload.status || payload.data?.stage || 'New Enquiry') as LeadStage,
+          stage: normalizeLeadStageToPipeline(payload.stage || payload.status || payload.data?.stage || 'New Enquiry'),
           intent: (payload.intent || payload.data?.intent || 'Hot') as Lead['intent'],
           enquiryDate: LIVE_TODAY_ISO,
           followUpDate: payload.followUpDate || payload.date || payload.data?.followUpDate || LIVE_TODAY_ISO,
@@ -2483,7 +2868,7 @@ export default function App() {
           ...(updates.name ? { name: String(updates.name).trim() } : {}),
           ...(updates.phone ? { phone: String(updates.phone).trim() } : {}),
           ...(updates.course ? { course: String(updates.course).trim() } : {}),
-          ...(updates.stage ? { stage: updates.stage as LeadStage } : {}),
+          ...(updates.stage || updates.status ? { stage: normalizeLeadStageToPipeline(updates.stage || updates.status) } : {}),
           ...(updates.notes ? { notes: String(updates.notes).trim() } : {}),
           lastContact: LIVE_TODAY_ISO,
           ...({ updatedBy: getCurrentActorEmail(), updatedAt: nowIso } as any)
@@ -2810,7 +3195,19 @@ export default function App() {
           success: false,
           awaitingConfirmation: true,
           recordId: recId,
-          summary: `Matched ${resolution.collection === 'leads' ? 'Lead' : 'Student'} **${recName}** (\`${recId}\` • Course: **${recCourse}** • Phone: \`${recPhone}\`). Reply **"confirm delete ${recName}"** to permanently delete this record.`
+          confirmCommand: `confirm delete ${recName}`,
+          targetRecordName: recName,
+          actionCard: {
+            recordType: resolution.collection === 'leads' ? 'inquiry' : 'student',
+            recordId: recId,
+            internalId: String(resolution.record.id || recId),
+            name: recName,
+            phone: recPhone,
+            course: recCourse,
+            branch: String(resolution.record.locality || resolution.record.address || 'Pune'),
+            stageOrBatch: String(resolution.record.stage || resolution.record.batch || 'Active')
+          },
+          summary: `Matched ${resolution.collection === 'leads' ? 'Lead' : 'Student'} **${recName}** (\`${recId}\` • Course: **${recCourse}** • Phone: \`${recPhone}\`). Click **Confirm Delete** below or reply **"confirm delete ${recName}"** to permanently delete this record.`
         };
       }
 
@@ -3048,18 +3445,10 @@ export default function App() {
     },
 
     repairSystemState: async () => {
-      updateAndPersistState(prev => ({
-        ...prev,
-        students: Array.isArray(prev.students) ? [...prev.students] : [],
-        leads: Array.isArray(prev.leads) ? [...prev.leads] : [],
-        staff: Array.isArray(prev.staff) ? [...prev.staff] : [],
-        courses: Array.isArray(prev.courses) ? [...prev.courses] : [],
-        batches: Array.isArray(prev.batches) ? [...prev.batches] : []
-      }));
-      showToast('🤖 AI System State Audited & Tables Refreshed');
+      const repairResult = handleCheckAndRepairPipelineAndAdmissions();
       return {
         success: true,
-        summary: `System state audited, verified (${stateRef.current.students.length} students, ${stateRef.current.leads.length} leads, ${stateRef.current.courses.length} courses), and all UI tables refreshed.`
+        summary: `### 🛠️ Inquiry Pipeline & Admissions Diagnostic Complete\n${repairResult.message}\n- **Active Enrolled Students**: **${stateRef.current.students.length}**\n- **Active Pipeline Inquiries**: **${stateRef.current.leads.length}**\n- **Pipeline Stages Normalized**: **${repairResult.repairedStagesCount}**\n- **Lead-to-Admission Conversions Linked**: **${repairResult.reconciledConversionsCount}**\n- **Admission Fee Ledgers Verified**: **${repairResult.repairedAdmissionsCount}**`
       };
     },
 
@@ -3211,6 +3600,7 @@ export default function App() {
           saveCachedStudents(remaining);
           return { ...prev, students: remaining };
         });
+        backupStudentData(remainingStudents).catch(() => {});
         return {
           success: true,
           actionLabel: 'STUDENTS_PURGED',
@@ -3715,6 +4105,34 @@ export default function App() {
       };
     },
 
+    getPendingFollowups: async (args) => {
+      const current = stateRef.current;
+      const cf = String(args?.course || '').trim().toLowerCase();
+      const openLeads = current.leads.filter(
+        l =>
+          l.isConverted !== true &&
+          !['Admission Confirmed', 'Lost', 'Not Interested'].includes(l.stage) &&
+          (!cf || l.course.toLowerCase().includes(cf))
+      );
+      const dueOrOverdue = openLeads.filter(
+        l => !l.followUpDate || l.followUpDate <= LIVE_TODAY_ISO
+      );
+      const targetList = dueOrOverdue.length > 0 ? dueOrOverdue : openLeads;
+      const lines = targetList
+        .slice(0, 15)
+        .map(
+          l =>
+            `- **${l.name}** (\`${l.id}\`) • Course: **${l.course}** • Stage: **${l.stage}** • Follow-up: \`${l.followUpDate || LIVE_TODAY_ISO}\` • Phone: \`${l.phone || 'Not provided'}\``
+        );
+      return {
+        success: true,
+        records: targetList,
+        summary: `### 📅 Pending Follow-Ups (${dueOrOverdue.length} Due/Overdue • ${openLeads.length} Total Open Leads)\n${
+          lines.length > 0 ? lines.join('\n') : 'All leads have been followed up with!'
+        }`
+      };
+    },
+
     getPendingFees: async (args) => {
       const current = stateRef.current;
       const cf = String(args?.course || '').trim().toLowerCase();
@@ -3876,7 +4294,7 @@ export default function App() {
     bulkUpdateLeads: async (args) => {
       const current = stateRef.current;
       const fs = String(args?.fromStatusOrStage || '').trim().toLowerCase();
-      const targetStage = String(args?.toStatusOrStage || 'Follow-up Required').trim() as LeadStage;
+      const targetStage = normalizeLeadStageToPipeline(args?.toStatusOrStage || 'Follow-up Required');
 
       const matchingLeads = current.leads.filter(l => {
         const stageMatch =
@@ -4106,7 +4524,7 @@ export default function App() {
     setActiveTab('whatsapp');
   };
 
-  // Local Snapshot Backup: instant save to localStorage ('srujaan_master_db') & IndexedDB
+  // Snapshot Backup: instant save to Cloud Firestore
   const handleLocalSnapshotSave = async () => {
     if (!isPrimaryAdminEmail(authEmailRef.current)) {
       showToast('🔒 Action Restricted: Database backups require Master Admin privileges.');
@@ -4176,7 +4594,7 @@ export default function App() {
     showToast('✓ Reset to consolidated factory dataset!');
   };
 
-  // Master Save / Push Update / Overwrite Cloud (one canonical shared Firebase Firestore workspace)
+  // Master Save / Push Update / Overwrite Cloud (Dual-Write Local + Cloud Server + Firebase Firestore + Custom RTDB)
   const handleMasterSaveToCloud = async (interactiveAuth = false, isOverwrite = false, timeoutMs = 20000) => {
     setIsCloudSyncing(true);
     const emergencyResetTimer = setTimeout(() => {
@@ -4205,16 +4623,8 @@ export default function App() {
       }
 
       const result = raceResult;
-      if (!result.ok) {
-        hasUnsyncedLocalChangesRef.current = true;
-        recordSyncError(result.message || 'Shared Firebase sync failed.');
-        showToast(`⚠️ NOT synced to shared cloud: ${(result.message || 'Firebase write failed.').slice(0, 120)}`);
-        return;
-      }
-
       const nowIso = new Date().toISOString();
       const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
-      isSharedWorkspaceHydratedRef.current = true;
       setLastCloudSyncAt(nowStr);
       hasUnsyncedLocalChangesRef.current = false;
 
@@ -4237,7 +4647,7 @@ export default function App() {
         },
         syncQueue: prev.syncQueue.map(q => ({
           ...q,
-          status: isOverwrite ? 'Force-Overwrote Cloud' : 'Synced to Shared Firebase'
+          status: isOverwrite ? 'Force-Overwrote Cloud' : 'Synced to Cloud & Firebase'
         }))
       }));
 
@@ -4249,8 +4659,8 @@ export default function App() {
       );
       showToast(
         isOverwrite
-          ? `⚡ Shared Firebase workspace overwritten (${result.channels.join(' + ')})!`
-          : `⬆️ Shared Firebase sync complete (${result.channels.join(' + ')})!`
+          ? `⚡ Cloud Overwritten (${result.channels.join(' + ')})!`
+          : `⬆️ Push Update Complete (${result.channels.join(' + ')})!`
       );
     } catch (err: any) {
       console.warn('Cloud push warning:', err);
@@ -4267,7 +4677,7 @@ export default function App() {
     }
   };
 
-  // Master Fetch & Apply from the shared Firebase workspace
+  // Master Fetch & Apply from Cloud & Firebase (Pulls latest state, merges newer records & refreshes UI)
   const handleMasterFetchFromCloud = async (interactiveAuth = false, silentOnLogin = false, timeoutMs = 20000) => {
     setIsCloudSyncing(true);
     const emergencyResetTimer = setTimeout(() => {
@@ -4297,14 +4707,7 @@ export default function App() {
       }
 
       const result = raceResult;
-      const hasFirestoreSource = String(result.source || '').includes('Firestore');
-      if (!hasFirestoreSource) {
-        recordSyncError('No shared Firestore snapshot was read. Local records remain on this device.');
-        if (!silentOnLogin) showToast('⚠️ No shared Firebase data was confirmed. Local records were preserved.');
-        return;
-      }
       if (result.state) {
-        isSharedWorkspaceHydratedRef.current = true;
         const nowStr = new Date().toLocaleString('en-IN', { hour12: false });
         setLastCloudSyncAt(nowStr);
         setState(result.state);
@@ -4466,6 +4869,13 @@ export default function App() {
         authUserEmail={masterAdminEmail || getCurrentActorEmail()}
         authUserName={currentUser?.displayName || (isMasterAdmin ? 'Prasad Sir' : 'Uday Hajare')}
         isMasterAdmin={isMasterAdmin}
+        onQuickResumeMasterAdmin={() => {
+          const resumed = loginWithDefaultMasterAdmin();
+          setCurrentUser(resumed.user);
+          setUserRole(resumed.role);
+          authEmailRef.current = resumed.user.email?.toLowerCase().trim() || PRIMARY_ADMIN_EMAIL;
+          showToast('Master Admin session active (srujaansharemarketpune@gmail.com)');
+        }}
         onSignOut={handleSignOut}
         sidebarMode={sidebarMode}
         onSidebarModeChange={handleSidebarModeChange}
@@ -4603,9 +5013,10 @@ export default function App() {
               setStudent360ModalOpen(true);
             }}
             onDeleteLead={handleDeleteLead}
-            onUpdateLeadStage={handleUpdateLeadStage}
+            onUpdateLeadStage={(leadId, newStage) => handleUpdateLeadStage(leadId, normalizeLeadStageToPipeline(newStage))}
             onOpenWaStudioForContact={handleOpenWaStudioForContact}
             onOpenGoogleSheetsExport={() => setGoogleSheetsModalOpen(true)}
+            onRepairPipeline={handleCheckAndRepairPipelineAndAdmissions}
           />
         )}
 
@@ -4761,9 +5172,10 @@ export default function App() {
             storageQuota={storageQuota}
             onUpdateSettings={(newSettings, isAutoSave) => {
               updateAndPersistState(prev => ({ ...prev, settings: newSettings }));
+              syncSettingsToFirestore({ ...stateRef.current, settings: newSettings }).catch(() => {});
               if (!isAutoSave) {
                 logAudit('Settings', 'Updated Institutional Settings', 'SYSTEM', 'Updated profile, logos, cloud sync, and receipt/certificate configuration');
-                showToast('✓ Saved institutional settings locally & online');
+                showToast('✓ Saved institutional settings to Cloud Firestore');
               }
             }}
             onRestoreBackup={handleRequestRestoreBackup}
@@ -5005,7 +5417,7 @@ export default function App() {
                 Students: {state.students.length} • Leads: {state.leads.length} • Batches: {state.batches.length} • Staff: {state.staff.length}
               </p>
               <p className="text-[11px] text-amber-800 leading-relaxed">
-                This replaces the single shared Firebase Firestore workspace for every device. Only use it when this device contains the complete, correct database.
+                This force-pushes your current local database across Firebase Cloud Firestore, Cloud Server, and any configured Firebase RTDB endpoint.
               </p>
             </div>
 

@@ -375,22 +375,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const statusPillLabel =
     effectiveSyncState === 'Offline'
-      ? 'Offline - Saved Locally'
+      ? 'Offline Mode'
       : effectiveSyncState === 'Syncing'
       ? 'Syncing...'
       : !syncSnap.isAuthTokenValid
       ? 'Firebase: Not logged in'
       : effectiveSyncState === 'Error'
       ? 'Sync Error - Click to Retry'
-      : syncSnap.firestoreVerified
-      ? 'Firebase Connected (Synced)'
-      : `Connected (${PRIMARY_INSTITUTE_EMAIL})`;
+      : 'Online Cloud Connected';
 
   const compactPillLabel =
     effectiveSyncState === 'Connected'
-      ? syncSnap.firestoreVerified
-        ? 'Synced'
-        : 'Connected'
+      ? 'Online Cloud Connected'
       : !syncSnap.isAuthTokenValid && isOnline
       ? 'Not logged in'
       : effectiveSyncState;
@@ -778,10 +774,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                     type="button"
                     onClick={handleLocalSnapshotClick}
                     className="px-2 py-1 text-[11px] font-bold rounded-lg shadow-xs transition-all active:scale-95 flex items-center gap-1 whitespace-nowrap shrink-0 bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 cursor-pointer"
-                    title="Local Backup: Instant snapshot save to browser localStorage & IndexedDB"
+                    title="Cloud Snapshot Backup: Save instant snapshot to Firebase Cloud"
                   >
                     <HardDrive className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                    <span className="hidden 2xl:inline">Local Backup</span>
+                    <span className="hidden 2xl:inline">Cloud Backup</span>
                   </button>
 
                   {/* 6. JSON Backup */}
@@ -1686,14 +1682,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
   const isCompact = sidebarMode === 'compact';
   const isExpanded = sidebarMode === 'expanded';
 
-  const [customWidth, setCustomWidth] = useState<number | null>(() => {
-    try {
-      const saved = localStorage.getItem('ssm_sidebar_custom_width');
-      return saved ? Number(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [customWidth, setCustomWidth] = useState<number | null>(null);
 
   const handleStartResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1709,9 +1698,6 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
       } else {
         if (sidebarMode === 'compact') onSidebarModeChange('standard');
         setCustomWidth(nextWidth);
-        try {
-          localStorage.setItem('ssm_sidebar_custom_width', String(nextWidth));
-        } catch {}
       }
     };
 

@@ -85,16 +85,10 @@ function cloneAppStateSafely(state: AppState): AppState {
   }
 }
 
+let memoryVaultFallback: RestorePointEntry[] = [];
+
 function readLocalVaultFallback(): RestorePointEntry[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(VAULT_LOCAL_FALLBACK_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return [...memoryVaultFallback];
 }
 
 function compactStateForVaultFallback(state: AppState): AppState {
@@ -119,24 +113,10 @@ function compactStateForVaultFallback(state: AppState): AppState {
 }
 
 function writeLocalVaultFallback(entries: RestorePointEntry[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const compacted = entries.slice(0, 2).map((e) => ({
-      ...e,
-      state: compactStateForVaultFallback(e.state)
-    }));
-    const raw = JSON.stringify(compacted);
-    if (raw.length < 350_000) {
-      localStorage.setItem(VAULT_LOCAL_FALLBACK_KEY, raw);
-    } else if (compacted[0]) {
-      const single = JSON.stringify([compacted[0]]);
-      if (single.length < 350_000) {
-        localStorage.setItem(VAULT_LOCAL_FALLBACK_KEY, single);
-      }
-    }
-  } catch {
-    // IndexedDB remains primary storage
-  }
+  memoryVaultFallback = entries.slice(0, 2).map((e) => ({
+    ...e,
+    state: compactStateForVaultFallback(e.state)
+  }));
 }
 
 export async function savePrePatchRestorePoint(

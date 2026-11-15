@@ -1,5 +1,6 @@
 import { AppState } from '../types';
 import { LIVE_TODAY_ISO } from '../data/initialData';
+import { auth } from './firebase';
 
 export interface ChatMessage {
   role: 'user' | 'model';
@@ -27,6 +28,10 @@ export interface ExecutedToolAction {
   actionLabel?: string;
   statusTag?: string;
   actionCard?: AiActionCardData;
+  operationType?: 'question' | 'search' | 'add' | 'update' | 'delete' | 'convert' | 'report';
+  awaitingConfirmation?: boolean;
+  confirmCommand?: string;
+  targetRecordName?: string;
 }
 
 export interface GeminiQueryResult {
@@ -461,11 +466,34 @@ export interface AgentStoreActions {
   ) =>
     | Promise<{ success: boolean; summary: string; recordId?: string; record?: any; actionCard?: AiActionCardData }>
     | { success: boolean; summary: string; recordId?: string; record?: any; actionCard?: AiActionCardData };
+  getPendingFollowups?: (args?: {
+    course?: string;
+  }) =>
+    | Promise<{ success: boolean; summary: string; records?: any[] }>
+    | { success: boolean; summary: string; records?: any[] };
   deleteRecord: (
     collection: string,
     identifier: string,
     confirmed?: boolean
-  ) => Promise<{ success: boolean; summary: string; recordId?: string; awaitingConfirmation?: boolean }> | { success: boolean; summary: string; recordId?: string; awaitingConfirmation?: boolean };
+  ) =>
+    | Promise<{
+        success: boolean;
+        summary: string;
+        recordId?: string;
+        awaitingConfirmation?: boolean;
+        confirmCommand?: string;
+        targetRecordName?: string;
+        actionCard?: AiActionCardData;
+      }>
+    | {
+        success: boolean;
+        summary: string;
+        recordId?: string;
+        awaitingConfirmation?: boolean;
+        confirmCommand?: string;
+        targetRecordName?: string;
+        actionCard?: AiActionCardData;
+      };
   markAttendance: (
     args: {
       studentNameOrPhone?: string;
@@ -705,6 +733,10 @@ export async function executeClientToolCall(
   actionLabel?: string;
   actionCard?: AiActionCardData;
   sources?: { title: string; url: string }[];
+  operationType?: 'question' | 'search' | 'add' | 'update' | 'delete' | 'convert' | 'report';
+  awaitingConfirmation?: boolean;
+  confirmCommand?: string;
+  targetRecordName?: string;
 }> {
   const name = call.name;
   const args = call.args || {};
@@ -720,8 +752,10 @@ export async function executeClientToolCall(
     name === 'deleteStudentRecord' ||
     name === 'delete_record' ||
     name === 'deleteStudent' ||
+    name === 'delete_student' ||
     name === 'deleteAllStudents' ||
     name === 'deleteLead' ||
+    name === 'delete_lead' ||
     name === 'deleteAllLeads' ||
     name === 'updateSystemSettings' ||
     (name === 'findDuplicateRecords' && Boolean(args.deleteDuplicates)) ||
@@ -732,6 +766,7 @@ export async function executeClientToolCall(
   if (!isMasterAdmin && isDestructiveTool) {
     return {
       success: false,
+      operationType: 'delete',
       summary:
         '🔒 Permission Denied: Record deletion, database resets, and API/system configuration changes are restricted to the Master Admin account (`srujaansharemarketpune@gmail.com`).'
     };
@@ -754,21 +789,27 @@ export async function executeClientToolCall(
     args.targetEntity = lastReferencedRecordState.name;
   }
 
-  // Tool: searchStudents / searchLeads / searchCRMRecords / searchRecords
+  // Tool: searchStudents / searchLeads / searchCRMRecords / searchRecords / get_leads / search_leads / get_students / search_students / get_admissions / search_all_records
   if (
     name === 'searchRecords' ||
     name === 'search_records' ||
+    name === 'search_all_records' ||
     name === 'searchStudents' ||
+    name === 'search_students' ||
+    name === 'get_students' ||
+    name === 'get_admissions' ||
     name === 'searchLeads' ||
+    name === 'search_leads' ||
+    name === 'get_leads' ||
     name === 'searchCRMRecords'
   ) {
     const query = String(
-      args.query || args.locality || args.course || args.batch || args.stage || args.status || args.identifier || args.name || ''
+      args.query || args.locality || args.course || args.batch || args.stage || args.status || args.date || args.source || args.identifier || args.name || ''
     ).trim();
     const rawCat =
-      name === 'searchStudents'
+      name === 'searchStudents' || name === 'search_students' || name === 'get_students' || name === 'get_admissions'
         ? 'students'
-        : name === 'searchLeads'
+        : name === 'searchLeads' || name === 'search_leads' || name === 'get_leads'
         ? 'inquiries'
         : String(args.category || args.entityType || 'all').toLowerCase();
     const entityType: 'students' | 'inquiries' | 'all' =
@@ -777,19 +818,54 @@ export async function executeClientToolCall(
         : rawCat === 'students' || rawCat === 'student' || rawCat === 'admissions' || rawCat === 'admission'
         ? 'students'
         : 'all';
+    if (name === 'get_students' && String(args.feeStatus || '').toLowerCase() === 'pending' && appStoreActions.getPendingFees) {
+      const res = await appStoreActions.getPendingFees({ course: args.course, batch: args.batch });
+      return {
+        ...res,
+        operationType: 'search',
+        actionLabel: '🔍 Pending Fee Students'
+      };
+    }
     if (appStoreActions.searchRecords) {
       const res = await appStoreActions.searchRecords(query, entityType);
       trackReferencedRecordFromResult(res, entityType === 'inquiries' ? 'leads' : 'students');
       return {
         ...res,
-        actionLabel: '🔍 Records Searched'
+        operationType: 'search',
+        actionLabel:
+          entityType === 'inquiries'
+            ? '🔍 Leads Searched'
+            : entityType === 'students'
+            ? '🔍 Students Searched'
+            : '🔍 Records Searched'
       };
     }
     return {
       success: true,
-      summary: `Searched records for "${query}".`,
+      operationType: 'search',
+      summary: `Searched records for "${query || 'All'}".`,
       actionLabel: '🔍 Records Searched'
     };
+  }
+
+  // Tool: get_pending_followups
+  if (name === 'get_pending_followups') {
+    if (appStoreActions.getPendingFollowups) {
+      const res = await appStoreActions.getPendingFollowups({ course: args.course });
+      return {
+        ...res,
+        operationType: 'search',
+        actionLabel: '📅 Pending Follow-Ups'
+      };
+    }
+    if (appStoreActions.searchRecords) {
+      const res = await appStoreActions.searchRecords(args.course || '', 'inquiries');
+      return {
+        ...res,
+        operationType: 'search',
+        actionLabel: '📅 Pending Follow-Ups'
+      };
+    }
   }
 
   // Tool: getStudentDetails / getLeadDetails
@@ -801,6 +877,7 @@ export async function executeClientToolCall(
       trackReferencedRecordFromResult(res, pref === 'inquiries' ? 'leads' : 'students');
       return {
         ...res,
+        operationType: 'search',
         actionLabel: name === 'getStudentDetails' ? '🎓 Student Details' : '📋 Lead Details'
       };
     }
@@ -809,6 +886,7 @@ export async function executeClientToolCall(
       trackReferencedRecordFromResult(res, pref === 'inquiries' ? 'leads' : 'students');
       return {
         ...res,
+        operationType: 'search',
         actionLabel: name === 'getStudentDetails' ? '🎓 Student Details' : '📋 Lead Details'
       };
     }
@@ -827,13 +905,16 @@ export async function executeClientToolCall(
       });
       return {
         ...res,
+        operationType: args.deleteDuplicates ? 'delete' : 'search',
+        awaitingConfirmation: res.awaitingConfirmation,
+        confirmCommand: res.awaitingConfirmation ? 'confirm delete duplicate inquiries' : undefined,
         actionLabel: args.deleteDuplicates && isConfirmed ? '🧹 Duplicates Removed' : '🔍 Duplicate Audit'
       };
     }
   }
 
-  // Tool: getPendingFees
-  if (name === 'getPendingFees') {
+  // Tool: getPendingFees / get_pending_fees
+  if (name === 'getPendingFees' || name === 'get_pending_fees') {
     if (appStoreActions.getPendingFees) {
       const res = await appStoreActions.getPendingFees({
         course: args.course,
@@ -841,6 +922,7 @@ export async function executeClientToolCall(
       });
       return {
         ...res,
+        operationType: 'report',
         actionLabel: '💰 Pending Fees Report'
       };
     }
@@ -855,13 +937,14 @@ export async function executeClientToolCall(
       });
       return {
         ...res,
+        operationType: 'report',
         actionLabel: '📅 Attendance Summary'
       };
     }
   }
 
-  // Tool: generateCRMReports
-  if (name === 'generateCRMReports') {
+  // Tool: generateCRMReports / generate_reports
+  if (name === 'generateCRMReports' || name === 'generate_reports') {
     if (appStoreActions.generateCRMReports) {
       const res = await appStoreActions.generateCRMReports({
         reportType: args.reportType || 'comprehensive',
@@ -869,6 +952,7 @@ export async function executeClientToolCall(
       });
       return {
         ...res,
+        operationType: 'report',
         actionLabel: '📊 CRM Intelligence Report'
       };
     }
@@ -884,19 +968,21 @@ export async function executeClientToolCall(
       });
       return {
         ...res,
+        operationType: 'update',
         actionLabel: '⚡ Bulk Leads Updated'
       };
     }
   }
 
-  // Tool 2: addLead / createLead({ name, phone, course, locality, source, notes, status })
-  if (name === 'addLead' || name === 'create_inquiry_lead' || name === 'createLead') {
+  // Tool 2: addLead / createLead / create_lead({ name, phone, course, locality, source, notes, status })
+  if (name === 'addLead' || name === 'create_inquiry_lead' || name === 'createLead' || name === 'create_lead') {
     const rawCourse = args.course || args.courseInterest || args.leadData?.course;
     const { courseName } = resolveSsmiCourseAndFee(rawCourse, undefined, 'Basic Trading', 5000);
     const cleanPhone = String(args.phone || args.leadData?.phone || '').replace(/^pending$/i, '').trim();
     const res = await appStoreActions.addRecord('inquiries', {
       name: args.name || args.leadData?.name || 'New Inquiry',
       phone: cleanPhone,
+      email: args.email || args.leadData?.email || '',
       course: courseName,
       branch: args.branch || args.locality || args.leadData?.locality,
       locality: args.locality || args.branch || args.leadData?.locality,
@@ -910,12 +996,20 @@ export async function executeClientToolCall(
     trackReferencedRecordFromResult(res, 'leads');
     return {
       ...res,
-      actionLabel: res.actionCard?.isDuplicateWarning ? '⚠️ Duplicate Detected in CRM' : '✅ Lead Added'
+      operationType: 'add',
+      actionLabel: res.actionCard?.isDuplicateWarning ? '⚠️ Duplicate Detected in CRM' : '➕ Lead Added'
     };
   }
 
-  // Tool 3: addStudent / createStudent({ name, phone, course, totalFees, paidFees, batch, paymentMode, notes })
-  if (name === 'addStudent' || name === 'createStudent' || name === 'admit_student' || name === 'addStudentRecord') {
+  // Tool 3: addStudent / createStudent / create_student / create_admission({ name, phone, course, totalFees, paidFees, batch, paymentMode, notes })
+  if (
+    name === 'addStudent' ||
+    name === 'createStudent' ||
+    name === 'create_student' ||
+    name === 'create_admission' ||
+    name === 'admit_student' ||
+    name === 'addStudentRecord'
+  ) {
     const rawCourse = args.course || args.studentData?.course;
     const rawTotal = args.totalFees ?? args.totalFee ?? args.netFee ?? args.studentData?.totalFee;
     const { courseName, totalFees } = resolveSsmiCourseAndFee(
@@ -944,24 +1038,28 @@ export async function executeClientToolCall(
     trackReferencedRecordFromResult(res, 'students');
     return {
       ...res,
+      operationType: 'add',
       actionLabel: res.actionCard?.isDuplicateWarning ? '⚠️ Duplicate Detected in CRM' : '🎓 Student Enrolled'
     };
   }
 
-  // Tool 4: updateRecord / updateStudent / updateLead({ identifier, targetType, updates })
+  // Tool 4: updateRecord / updateStudent / update_student / update_admission / updateLead / update_lead({ identifier, targetType, updates })
   if (
     name === 'updateRecord' ||
     name === 'update_record' ||
     name === 'updateStudentRecord' ||
     name === 'updateStudent' ||
-    name === 'updateLead'
+    name === 'update_student' ||
+    name === 'update_admission' ||
+    name === 'updateLead' ||
+    name === 'update_lead'
   ) {
     const rawTarget = String(
       args.targetType ||
         args.collection ||
-        (name === 'updateStudentRecord' || name === 'updateStudent'
+        (name === 'updateStudentRecord' || name === 'updateStudent' || name === 'update_student' || name === 'update_admission'
           ? 'students'
-          : name === 'updateLead'
+          : name === 'updateLead' || name === 'update_lead'
           ? 'inquiries'
           : 'auto')
     ).toLowerCase();
@@ -1006,11 +1104,12 @@ export async function executeClientToolCall(
     trackReferencedRecordFromResult(res, targetCollection === 'inquiries' ? 'leads' : 'students');
     return {
       ...res,
+      operationType: 'update',
       actionLabel: res.success ? '✏️ Record Updated' : '⚠️ Disambiguation Needed'
     };
   }
 
-  // Tool 5: convertLeadToStudent({ identifier, course, totalFees, paidFees, batch })
+  // Tool 5: convertLeadToStudent / convert_lead_to_student({ identifier, course, totalFees, paidFees, batch })
   if (
     name === 'convertLeadToStudent' ||
     name === 'convert_lead_to_student' ||
@@ -1047,6 +1146,7 @@ export async function executeClientToolCall(
       trackReferencedRecordFromResult(res, 'students');
       return {
         ...res,
+        operationType: 'convert',
         actionLabel: '🔄 Lead Converted to Student'
       };
     }
@@ -1060,24 +1160,27 @@ export async function executeClientToolCall(
     trackReferencedRecordFromResult(res, 'students');
     return {
       ...res,
+      operationType: 'convert',
       actionLabel: '🔄 Lead Converted to Student'
     };
   }
 
-  // Tool 6: deleteRecord / deleteStudent / deleteLead({ identifier, targetType, confirmed })
+  // Tool 6: deleteRecord / deleteStudent / delete_student / deleteLead / delete_lead({ identifier, targetType, confirmed })
   if (
     name === 'deleteRecord' ||
     name === 'delete_record' ||
     name === 'deleteStudentRecord' ||
     name === 'deleteStudent' ||
-    name === 'deleteLead'
+    name === 'delete_student' ||
+    name === 'deleteLead' ||
+    name === 'delete_lead'
   ) {
     const rawTarget = String(
       args.targetType ||
         args.collection ||
-        (name === 'deleteStudentRecord' || name === 'deleteStudent'
+        (name === 'deleteStudentRecord' || name === 'deleteStudent' || name === 'delete_student'
           ? 'students'
-          : name === 'deleteLead'
+          : name === 'deleteLead' || name === 'delete_lead'
           ? 'inquiries'
           : 'auto')
     ).toLowerCase();
@@ -1091,23 +1194,37 @@ export async function executeClientToolCall(
       Boolean(args.confirmed) ||
       Boolean(args.force) ||
       /\b(confirm|force|yes\s+delete|permanently\s+delete|pakka)\b/i.test(String(rawUserPrompt || ''));
+    const targetIdent = String(args.identifier || args.studentId || args.leadId || args.targetEntity || '');
     const res = await appStoreActions.deleteRecord(
       targetCollection,
-      String(args.identifier || args.studentId || args.leadId || args.targetEntity || ''),
+      targetIdent,
       isExplicitlyConfirmed
     );
     return {
       ...res,
+      operationType: 'delete',
+      awaitingConfirmation: res.awaitingConfirmation,
+      confirmCommand:
+        res.confirmCommand ||
+        (res.awaitingConfirmation ? `confirm delete ${res.targetRecordName || targetIdent}` : undefined),
+      targetRecordName: res.targetRecordName || targetIdent,
       actionLabel: res.awaitingConfirmation ? '⚠️ Confirm Deletion' : '🗑️ Record Deleted'
     };
   }
 
-  // Tool 7: getDashboardStats() / getDashboardStatistics() / getDatabaseSnapshot()
-  if (name === 'getDashboardStats' || name === 'getDashboardStatistics' || name === 'getDatabaseSnapshot') {
+  // Tool 7: getDashboardStats() / getDashboardStatistics() / get_dashboard_summary() / get_admission_summary() / getDatabaseSnapshot()
+  if (
+    name === 'getDashboardStats' ||
+    name === 'getDashboardStatistics' ||
+    name === 'get_dashboard_summary' ||
+    name === 'get_admission_summary' ||
+    name === 'getDatabaseSnapshot'
+  ) {
     if (appStoreActions.getDashboardStats) {
       const res = await appStoreActions.getDashboardStats();
       return {
         ...res,
+        operationType: 'report',
         actionLabel: '📊 Dashboard Stats'
       };
     }
@@ -1115,11 +1232,13 @@ export async function executeClientToolCall(
       const res = await appStoreActions.getDatabaseSnapshot();
       return {
         ...res,
+        operationType: 'report',
         actionLabel: '📊 Dashboard Stats'
       };
     }
     return {
       success: true,
+      operationType: 'report',
       summary: 'Retrieved live CRM dashboard statistics.',
       actionLabel: '📊 Dashboard Stats'
     };
@@ -1488,6 +1607,37 @@ async function executeLocalIntelligentEngine(
   }
 
   if (appStoreActions) {
+    // 000. Inquiry Pipeline & Admissions Diagnostic / Repair ("check and run the pipeline of inquiry", "repair inquiry pipeline", "check leads and admissions")
+    if (
+      /\b(repair|fix|diagnostic|verify|check)\b/i.test(lower) &&
+      /\b(pipeline|inquir(?:y|ies)|leads?|admissions?|system|retest)\b/i.test(lower) &&
+      !/\b(search|find\s+all\s+leads\s+from)\b/i.test(lower)
+    ) {
+      const res = await executeClientToolCall(
+        {
+          name: 'executeSystemDiagnosticAndRepair',
+          args: { targetArea: 'all' }
+        },
+        appStoreActions,
+        userEmail,
+        cleanPrompt
+      );
+      return {
+        text: res.summary,
+        searchSources: [],
+        executedActions: [
+          {
+            toolName: 'executeSystemDiagnosticAndRepair',
+            success: res.success,
+            summary: res.summary,
+            operationType: 'update',
+            actionLabel: '🛠️ Pipeline & Admissions Repaired',
+            statusTag: '[Executing: executeSystemDiagnosticAndRepair -> Done]'
+          }
+        ]
+      };
+    }
+
     // 00A. Duplicate Detection & Cleanup ("Delete duplicate inquiries", "Find duplicate records")
     if (/\b(duplicate|duplicates)\b/i.test(lower)) {
       const autoDelete = /\b(delete|remove|clean|purge)\b/i.test(lower);
@@ -1976,6 +2126,11 @@ async function executeLocalIntelligentEngine(
             success: res.success,
             summary: res.summary,
             recordId: res.recordId,
+            operationType: 'delete',
+            awaitingConfirmation: res.awaitingConfirmation,
+            confirmCommand: res.confirmCommand,
+            targetRecordName: res.targetRecordName,
+            actionCard: res.actionCard,
             actionLabel: res.actionLabel || (res.success ? '🗑️ Record Deleted' : '⚠️ Confirm Deletion')
           }
         ]
@@ -2263,6 +2418,172 @@ export async function callWithExponentialBackoff<T>(
 }
 
 /**
+ * Smart Incomplete-Sentence Auto-Completer & Real-Time Suggestion Generator for Candle AI
+ */
+export function autoCompleteIncompletePrompt(
+  rawInput: string,
+  state?: AppState
+): { completedPrompt: string; wasAutoCompleted: boolean } {
+  const trimmed = String(rawInput || '').trim();
+  if (!trimmed) return { completedPrompt: '', wasAutoCompleted: false };
+  const lower = trimmed.toLowerCase();
+
+  // 1. Bare Name + 10-digit Phone (+ optional course or fee) without action verb: e.g. "Rahul Sharma 9876543210 F&O"
+  const bareNamePhoneMatch = trimmed.match(/^([A-Za-z][A-Za-z\s]{1,28}?)\s+([6-9]\d{9})(?:\s+(.*))?$/i);
+  if (
+    bareNamePhoneMatch &&
+    !/^(add|create|enroll|admit|update|change|delete|remove|search|find|convert)\b/i.test(lower)
+  ) {
+    const person = bareNamePhoneMatch[1].trim();
+    const phone = bareNamePhoneMatch[2].trim();
+    const rest = (bareNamePhoneMatch[3] || '').trim();
+    const hasFee = /\b(\d{4,6})\b/.test(rest);
+    if (hasFee || /\b(student|admission|enroll|paid)\b/i.test(rest)) {
+      return {
+        completedPrompt: `Enroll new student ${person} with phone ${phone}${rest ? ` ${rest}` : ''}`,
+        wasAutoCompleted: true
+      };
+    }
+    return {
+      completedPrompt: `Add new inquiry lead ${person} with phone ${phone}${rest ? ` interested in ${rest}` : ''}`,
+      wasAutoCompleted: true
+    };
+  }
+
+  // 2. Existing Student or Lead Name + Number (shorthand fee update): e.g. "Monika 15000" or "Monika Patil 15000"
+  const nameAndAmountMatch = trimmed.match(/^([A-Za-z][A-Za-z\s]{2,28}?)\s+(?:rs\.?|₹)?(\d{3,6})$/i);
+  if (
+    nameAndAmountMatch &&
+    !/^(add|create|enroll|update|set|change|convert|delete)\b/i.test(lower)
+  ) {
+    const candidateName = nameAndAmountMatch[1].trim();
+    const amount = nameAndAmountMatch[2].trim();
+    return {
+      completedPrompt: `Update ${candidateName} fees paid to ${amount}`,
+      wasAutoCompleted: true
+    };
+  }
+
+  // 3. Shorthand "convert <Name>" without "to student"
+  const shortConvertMatch = trimmed.match(/^(?:convert|promote)\s+([A-Za-z][A-Za-z\s]{1,28})$/i);
+  if (shortConvertMatch && !/\b(to|into|student|admission)\b/i.test(lower)) {
+    return {
+      completedPrompt: `Convert lead ${shortConvertMatch[1].trim()} to student admission`,
+      wasAutoCompleted: true
+    };
+  }
+
+  // 4. Shorthand single/two-word fragments
+  if (/^(nifty|bank\s*nifty|market|sensex|nifty\s*50|market\s*today|nifty\s*today)$/i.test(lower)) {
+    return {
+      completedPrompt: `What is today's live ${trimmed} level, trend, and institutional support/resistance setup?`,
+      wasAutoCompleted: true
+    };
+  }
+  if (/^(pending|pending\s*fees?|dues|fee\s*dues|unpaid)$/i.test(lower)) {
+    return {
+      completedPrompt: 'Show all active students with pending fee balances and total fee collection summary',
+      wasAutoCompleted: true
+    };
+  }
+  if (/^(follow\s*ups?|followups?|due\s*follow\s*ups?|aaj\s*ke\s*follow\s*ups?)$/i.test(lower)) {
+    return {
+      completedPrompt: 'Show all open inquiry leads due for follow-up today',
+      wasAutoCompleted: true
+    };
+  }
+  if (/^(pipeline|check\s*pipeline|repair\s*pipeline|inquiry\s*pipeline|repair\s*inquir(?:y|ies))$/i.test(lower)) {
+    return {
+      completedPrompt: 'Check and repair the inquiry pipeline stages and student admission records',
+      wasAutoCompleted: true
+    };
+  }
+
+  // 5. Bare existing student or lead name typed alone (1-3 words matching a known record)
+  if (state && trimmed.split(/\s+/).length <= 3 && !/[?.,!]/.test(trimmed)) {
+    const matchedStu = state.students?.find(
+      s => s.name.toLowerCase() === lower || s.regId.toLowerCase() === lower
+    );
+    if (matchedStu) {
+      return {
+        completedPrompt: `Show complete student admission details and fee ledger for ${matchedStu.name}`,
+        wasAutoCompleted: true
+      };
+    }
+    const matchedLead = state.leads?.find(
+      l => l.name.toLowerCase() === lower || l.id.toLowerCase() === lower
+    );
+    if (matchedLead) {
+      return {
+        completedPrompt: `Show complete inquiry lead details and pipeline stage for ${matchedLead.name}`,
+        wasAutoCompleted: true
+      };
+    }
+  }
+
+  return { completedPrompt: trimmed, wasAutoCompleted: false };
+}
+
+export function getSmartSentenceCompletions(rawInput: string, state?: AppState): string[] {
+  const trimmed = String(rawInput || '').trim();
+  if (!trimmed || trimmed.length < 2) return [];
+  const lower = trimmed.toLowerCase();
+  const suggestions: string[] = [];
+
+  const sampleStudent = state?.students?.[0]?.name || 'Monika Patil';
+  const sampleLead =
+    state?.leads?.find(l => l.stage !== 'Admission Confirmed')?.name ||
+    state?.leads?.[0]?.name ||
+    'Rohan Mane';
+
+  // Match partial student or lead names in live state
+  const matchingStudents = (state?.students || [])
+    .filter(s => s.name.toLowerCase().includes(lower) || s.regId.toLowerCase().includes(lower))
+    .slice(0, 2);
+  const matchingLeads = (state?.leads || [])
+    .filter(l => l.name.toLowerCase().includes(lower) || l.id.toLowerCase().includes(lower))
+    .slice(0, 2);
+
+  matchingStudents.forEach(s => {
+    suggestions.push(`Show complete student details for ${s.name}`);
+    suggestions.push(`Update ${s.name}'s fee paid to 15000`);
+  });
+
+  matchingLeads.forEach(l => {
+    suggestions.push(`Convert lead ${l.name} to student admission`);
+    suggestions.push(`Update ${l.name}'s stage to Hot Prospect`);
+  });
+
+  if (/^(add|new|create|enr)/i.test(lower)) {
+    suggestions.push(`Add lead Rahul Sharma 9876543210 interested in Futures & Options`);
+    suggestions.push(`Enroll student Sneha Kulkarni 9823011223 in Complete Trader Program with fee paid 10000`);
+  } else if (/^(upd|cha|mod|set)/i.test(lower)) {
+    suggestions.push(`Update ${sampleStudent}'s fee paid to 15000`);
+    suggestions.push(`Update ${sampleLead}'s stage to Follow-up Required`);
+  } else if (/^(con|pro)/i.test(lower)) {
+    suggestions.push(`Convert lead ${sampleLead} to student admission with fee paid 5000`);
+  } else if (/^(del|rem)/i.test(lower)) {
+    suggestions.push(`Delete duplicate inquiries`);
+    suggestions.push(`Delete lead ${sampleLead}`);
+  } else if (/^(nif|ban|mar|tod|liv)/i.test(lower)) {
+    suggestions.push(`What is today's live Nifty 50 and Bank Nifty trend and support/resistance?`);
+    suggestions.push(`Show today's admissions and inquiry pipeline summary`);
+  } else if (/^(pip|rep|che|inq|lea|adm)/i.test(lower)) {
+    suggestions.push(`Check and repair the inquiry pipeline and student admission records`);
+    suggestions.push(`Show all open inquiry leads due for follow-up today`);
+  } else if (/^(fee|pen|due|ove)/i.test(lower)) {
+    suggestions.push(`Show all active students with pending fee balances`);
+  }
+
+  const autoComp = autoCompleteIncompletePrompt(trimmed, state);
+  if (autoComp.wasAutoCompleted && !suggestions.includes(autoComp.completedPrompt)) {
+    suggestions.unshift(autoComp.completedPrompt);
+  }
+
+  return Array.from(new Set(suggestions)).filter(s => s.toLowerCase() !== lower).slice(0, 3);
+}
+
+/**
  * World-Class Executive AI Admin Agent (`gemini-2.5-flash` / `gemini-3.8-flash`)
  * with combined Google Search live internet grounding + 17 CRM Database Function Tools,
  * multi-turn tool execution loop (`while (response.functionCalls)`), Firebase Bearer token verification,
@@ -2277,6 +2598,12 @@ export async function askGeminiWithSearch(
   userEmail?: string | null,
   onStreamChunk?: (partialText: string, actions?: ExecutedToolAction[]) => void
 ): Promise<GeminiQueryResult> {
+  const autoCompletion = autoCompleteIncompletePrompt(prompt, state);
+  const effectivePrompt = autoCompletion.completedPrompt || prompt;
+  const autoCompletePrefix = autoCompletion.wasAutoCompleted
+    ? `> ✨ *Auto-Completed Input:* **"${effectivePrompt}"**\n\n`
+    : '';
+  prompt = effectivePrompt;
   const normalizedEmail = (userEmail || 'srujaansharemarketpune@gmail.com').trim().toLowerCase();
   const isMasterAdmin =
     !userEmail ||
@@ -2309,7 +2636,6 @@ export async function askGeminiWithSearch(
   // Retrieve Firebase ID token from active auth session if signed in
   let authHeader: Record<string, string> = {};
   try {
-    const { auth } = await import('./firebase');
     const token = await auth?.currentUser?.getIdToken?.();
     if (token) {
       authHeader = { Authorization: `Bearer ${token}` };
@@ -2401,7 +2727,11 @@ export async function askGeminiWithSearch(
           recordId: execRes.recordId,
           actionLabel: execRes.actionLabel || `✅ ${fc.name}`,
           statusTag: `[Executing: ${fc.name} -> Done]`,
-          actionCard: execRes.actionCard
+          actionCard: execRes.actionCard,
+          operationType: execRes.operationType,
+          awaitingConfirmation: execRes.awaitingConfirmation,
+          confirmCommand: execRes.confirmCommand,
+          targetRecordName: execRes.targetRecordName
         });
         functionResponses.push({
           functionResponse: {
@@ -2412,7 +2742,8 @@ export async function askGeminiWithSearch(
                 success: execRes.success,
                 summary: execRes.summary,
                 recordId: execRes.recordId,
-                record: execRes.record
+                record: execRes.record,
+                awaitingConfirmation: execRes.awaitingConfirmation
               }
             }
           }
@@ -2498,7 +2829,7 @@ export async function askGeminiWithSearch(
 
       if (finalText) {
         const finalResult: GeminiQueryResult = {
-          text: finalText,
+          text: autoCompletePrefix + finalText,
           searchSources: collectedSources,
           executedActions: executedActions.length > 0 ? executedActions : undefined
         };
@@ -2512,8 +2843,12 @@ export async function askGeminiWithSearch(
 
   // Fallback to deterministic local CRM & Trading Intelligence Engine
   const localRes = await executeLocalIntelligentEngine(prompt, state, appStoreActions, userEmail);
-  onStreamChunk?.(localRes.text, localRes.executedActions);
-  return localRes;
+  const prefixedLocalText = autoCompletePrefix + localRes.text;
+  onStreamChunk?.(prefixedLocalText, localRes.executedActions);
+  return {
+    ...localRes,
+    text: prefixedLocalText
+  };
 }
 
 
